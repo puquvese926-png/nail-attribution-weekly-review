@@ -1,0 +1,46 @@
+<!doctype html><meta charset="utf-8"><title>Seed full workflow import</title>
+<body><pre id="log">Preparing...</pre>
+<script src="./review-mock-data.js"></script>
+<script src="./full-workflow-import-seed.js"></script>
+<script>
+(async function(){
+  const out = document.getElementById('log');
+  const source = window.WeeklyReviewFullImportSeed.source;
+  const token = `${window.WeeklyReviewMockData.currentSample || 'sample'}-${(window.WeeklyReviewMockData.posts || []).length}`;
+  const key = `latest-import.${token}`;
+  const dbName = 'weekly-review-dashboard';
+  const storeName = 'imports';
+  const metaKey = `weekly-review-dashboard.import-cache.${token}.meta`;
+  const chunkPrefix = `weekly-review-dashboard.import-cache.${token}.chunk.`;
+  const aiKey = `weekly-review-dashboard.3.ai-result.${token}`;
+  localStorage.removeItem(aiKey);
+  try {
+    const old = JSON.parse(localStorage.getItem(metaKey) || 'null');
+    const count = old && Number.isFinite(old.chunks) ? old.chunks : 120;
+    for (let i = 0; i < count; i += 1) localStorage.removeItem(`${chunkPrefix}${i}`);
+    localStorage.removeItem(metaKey);
+    const json = JSON.stringify(source);
+    const size = 500000;
+    const chunks = Math.ceil(json.length / size);
+    for (let i = 0; i < chunks; i += 1) localStorage.setItem(`${chunkPrefix}${i}`, json.slice(i * size, (i + 1) * size));
+    localStorage.setItem(metaKey, JSON.stringify({ chunks, savedAt: '2026-05-27' }));
+  } catch (error) { console.warn('localStorage seed skipped', error); }
+  await new Promise((resolve, reject) => {
+    const req = indexedDB.open(dbName, 1);
+    req.onupgradeneeded = () => { const db = req.result; if (!db.objectStoreNames.contains(storeName)) db.createObjectStore(storeName, { keyPath: 'key' }); };
+    req.onerror = () => reject(req.error);
+    req.onsuccess = () => {
+      const db = req.result;
+      const tx = db.transaction(storeName, 'readwrite');
+      tx.objectStore(storeName).put({ key, source, savedAt: '2026-05-27' });
+      tx.oncomplete = () => resolve();
+      tx.onerror = () => reject(tx.error);
+    };
+  });
+  out.textContent = `Seeded full import cache
+key=${key}
+posts=${source.posts.length}
+file=${source.importMeta.fileName}
+AI local draft cleared; go back to index and import simulated AI JSON.`;
+})().catch(error => { document.getElementById('log').textContent = 'Seed failed: ' + (error && error.stack || error); });
+</script>

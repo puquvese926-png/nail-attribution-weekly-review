@@ -1,0 +1,84 @@
+<task>
+File: d:\projects\nail-attribution-console-demo\output\weekly-review-dashboard\3.0\app.js
+
+Perform 8 surgical edits to add an Overview tab, exposure concentration component, and per-post exposure comparison table. Do NOT modify any calculation functions, existing tab rendering logic (cohort, channel, content, import), or import/export logic.
+
+<edits>
+1. VIEWS array (insert at front, before cohort):
+   { key: "overview", label: "总览", short: "览", scope: "all", subtitle: "本周核心指标、关键发现和各维度速览。" }
+
+2. state.view default: change from "cohort" to "overview"
+
+3. renderActiveView: before the "cohort" if-branch, insert:
+   if (view.key === "overview") return renderOverview();
+
+4. buildMetricCards: before the "cohort" if-branch, insert the overview block:
+   if (tabKey === "overview") {
+     const curPosts = all.currentPostCount || 0, prevPosts = all.previousPostCount || 0;
+     const wowPosts = safeWoW(curPosts, prevPosts);
+     const curRate = safeRate(curInt, curExp), prevRate = safeRate(prevInt, prevExp), wowRate = safeWoW(curRate, prevRate);
+     const perPostExp = safeRate(curExp, curPosts);
+     const sortedExposures = all.poolPosts.map(p => diffMetrics(p, reviewWindow.start, reviewWindow.end).exposure).filter(e => e > 0).sort((a,b) => a-b);
+     const medianExp = sortedExposures.length ? sortedExposures[Math.floor(sortedExposures.length/2)] : 0;
+     const top5 = all.poolPosts.map(p => ({ m: diffMetrics(p, reviewWindow.start, reviewWindow.end) })).sort((a,b) => b.m.exposure - a.m.exposure).slice(0,5);
+     const top5Share = safeRate(sum(top5, p => p.m.exposure), curExp);
+     const quality = all.poolPosts.filter(p => (asText(p.featuredQuality)==="1.0"||asText(p.featuredQuality)==="1")).length;
+     return `<div class="metric-grid-2row">${cardWow("本周帖子数", curPosts, wowPosts)}${cardWow("本周总曝光", curExp, wowExp)}${cardWow("本周总互动", curInt, wowInt)}${cardWow("本周互动率", formatPct(curRate), wowRate)}${card("贴均曝光", formatCompact(perPostExp), "中位 "+formatCompact(medianExp))}${card("曝光中位数", formatCompact(medianExp), "贴均/中位="+(perPostExp>0&&medianExp>0?(perPostExp/medianExp).toFixed(1):"-")+"倍")}${card("Top5曝光占比", formatPct(top5Share), top5Share<0.3?"头部较分散":"头部集中")}${card("优质内容", quality, "条")}</div>`;
+   }
+
+5. buildNarrative: before the "cohort" if-branch, insert the overview block. Copy this exact code:
+   if (tabKey === "overview") {
+     const breakdown = buildWeekBreakdown(all.poolPosts, reviewWindow.start, reviewWindow.end);
+     const topWeek = breakdown.rows[0] || {};
+     const lines = [];
+     if (wowExp > 0.05) lines.push({text:`整体向好：曝光环比增长 ${formatPct(wowExp)}，${topWeek.key||"最新周"}贡献了${formatPct(topWeek.exposureShare||0)}的曝光。`,tone:"good"});
+     else if (wowExp < -0.05) lines.push({text:`整体下滑：曝光环比下降 ${formatPct(Math.abs(wowExp))}，需要重点关注。`,tone:"bad"});
+     else lines.push({text:`整体平稳：曝光环比${wowExp>0?"增长":"下降"} ${formatPct(Math.abs(wowExp))}，变化在正常范围内。`,tone:"neutral"});
+     const channels = buildChannelRows(all.poolPosts, all.currentTotals);
+     const prevCh = buildChannelRows(all.poolPosts, all.previousTotals);
+     const withWow = channels.map(ch => ({...ch,wow:safeWoW(ch.exposure,prevCh.find(p=>p.label===ch.label)?.exposure||0)})).sort((a,b)=>b.wow-a.wow);
+     const bestCh = withWow[0], worstCh = withWow[withWow.length-1];
+     if (bestCh && bestCh.wow > 0.1) lines.push({text:`渠道亮点：${bestCh.label} 曝光环比增长 ${formatPct(bestCh.wow)}，涨幅最大。`,tone:"good"});
+     if (worstCh && worstCh.wow < -0.1) lines.push({text:`需要关注：${worstCh.label} 曝光环比下降 ${formatPct(Math.abs(worstCh.wow))}，跌幅最大。`,tone:worstCh.wow<-0.2?"bad":"warn"});
+     const top1 = all.poolPosts.map(p=>({...p,m:diffMetrics(p,reviewWindow.start,reviewWindow.end)})).sort((a,b)=>b.m.exposure-a.m.exposure)[0];
+     if (top1 && top1.m.exposure > 0) lines.push({text:`内容亮点：最高单帖曝光 ${formatCompact(top1.m.exposure)}（${escapeHtml(top1.owner||"未知")}·${escapeHtml(top1.displayChannelName||top1.channelName||"未知")}）。`,tone:"good"});
+     const audit = state.importAudit;
+     if (audit) {
+       const skipped = audit.totalRows - audit.acceptedRows;
+       lines.push({text:`数据健康：导入 ${formatInteger(audit.totalRows)} 行，有效 ${formatInteger(audit.acceptedRows)} 行${skipped>0?"，跳过 "+formatInteger(skipped)+" 行":""}。`,tone:skipped>audit.totalRows*0.05?"warn":"good"});
+     }
+     return `<section class="findings-panel"><div class="findings-title">本周关键发现</div>${lines.map(l=>`<div class="findings-item is-${l.tone||"neutral"}"><span class="findings-bullet"></span><span>${l.text}</span></div>`).join("")}</section>`;
+   }
+
+6. New function renderOverview(): insert between renderActiveView and renderAnalysisPanel. It returns buildMetricCards("overview") + buildNarrative("overview") + a 3-column grid:
+   - Column 1: Channel quick-view. Top 3 channels with mini bars showing exposure.
+   - Column 2: Exposure concentration. 7 buckets: 50万+, 10~50万, 5~10万, 1~5万, 5千~1万, 1千~5千, <1千. Count posts in each bucket.
+   - Column 3: Content quick-view. Top 3 posts sorted by exposure descending. Show perPostExp vs medianExp comparison.
+   - Bottom row: Quick links using .quick-link[data-view] elements pointing to "channel" and "content" views.
+
+7. bindGlobalEvents: after the dom.nav click binding, add:
+   dom.stage.addEventListener("click", event => {
+     const link = event.target.closest(".quick-link[data-view]");
+     if (!link) return;
+     const nextView = link.dataset.view;
+     if (nextView && nextView !== state.view) {
+       state.view = nextView;
+       render();
+     }
+   });
+
+8. renderChannelDiagnosis: after the heatmap section and before the 3-column grid, add a per-post exposure comparison table. For each type x platform cell, compute perPostExp = exposure / postCount. Compare to the overall mean perPostExp. Apply CSS class "above-avg" if >1.3x mean, "below-avg" if <0.7x mean.
+</edits>
+
+<output_contract>
+Return only the final `node --check app.js` verification result confirming syntax is valid. If node --check fails, fix and retry until it passes.
+</output_contract>
+
+<action_safety>
+Do not modify any calculation functions (diffMetrics, safeWoW, safeRate, formatCompact, etc.), existing 4 tab rendering blocks, import/export, CSS, or HTML structure outside the targeted functions.
+</action_safety>
+
+<verification_loop>
+After all edits, run `node --check "d:\projects\nail-attribution-console-demo\output\weekly-review-dashboard\3.0\app.js"` and confirm it passes. If it fails, fix the syntax error and recheck.
+</verification_loop>
+</task>

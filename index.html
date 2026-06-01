@@ -1,0 +1,47 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>周复盘看板 · 品牌营销</title>
+  <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>馃搳</text></svg>">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=DM+Sans:opsz,wght@9..40,400;9..40,500;9..40,600;9..40,700&family=DM+Serif+Display&family=JetBrains+Mono:wght@400;500;700&family=Noto+Sans+SC:wght@400;500;700&family=Noto+Serif+SC:wght@400;600;700&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="./styles.css?v=4.2">
+</head>
+<body>
+  <div class="app-shell">
+    <header class="top-bar" role="banner">
+      <span class="brand">周复盘看板</span>
+      <nav id="nav-tabs" class="nav-tabs" aria-label="视图切换"></nav>
+      <select id="metric-switcher" class="button-sm" style="margin-left:auto;">
+        <option value="exposure">曝光量</option>
+        <option value="interaction">互动量</option>
+        <option value="interactionRate">互动率</option>
+        <option value="likes">点赞数</option>
+        <option value="comments">评论数</option>
+        <option value="shares">转发数</option>
+        <option value="saves">收藏数</option>
+      </select>
+      <div class="week-display">
+        <span>复盘周</span>
+        <button class="button-sm" type="button" id="week-picker-btn" style="display:flex;align-items:center;gap:6px;"><strong id="week-label">W22</strong><span id="week-range"></span><span style="font-size:10px;color:var(--muted);">▼</span></button>
+      </div>
+      <button id="import-data-btn" class="button-sm" type="button" aria-label="导入 Excel 数据文件">导入 Excel</button>
+      <button id="reset-data-btn" class="button-sm" type="button">恢复内置</button>
+    </header>
+
+    <main id="view-stage" class="workspace" tabindex="-1" role="main" aria-live="polite"></main>
+  </div>
+
+  <input id="import-file-input" type="file" accept=".xlsx,.csv" hidden>
+  <div id="modal-root" class="modal-root" aria-live="polite"></div>
+  <div id="publish-week-detail" class="publish-week-detail" hidden></div>
+  <div id="toast" class="toast" role="status" aria-live="polite" hidden></div>
+
+  <script src="./review-mock-data.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
+  <script src="./app.js?v=4.2"></script>
+</body>
+</html>
