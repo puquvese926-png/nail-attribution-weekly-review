@@ -758,7 +758,18 @@ textarea {
   display: grid;
   grid-template-columns: repeat(3, minmax(0, 1fr));
   gap: var(--space-4);
-  align-items: start;
+  align-items: stretch;
+}
+.three-col-grid .panel {
+  display: flex;
+  flex-direction: column;
+  margin-bottom: 0;
+}
+.three-col-grid .panel-body {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
 }
 
 .two-col,
@@ -784,6 +795,15 @@ textarea {
   border: 1px solid var(--line);
   border-radius: var(--radius);
   background: var(--surface-warm);
+}
+
+.offsite-detail-panel .dtc-summary {
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  margin-bottom: var(--space-4);
+}
+
+.offsite-detail-panel .summary-card {
+  min-width: 0;
 }
 
 .summary-label {
@@ -1215,6 +1235,166 @@ textarea {
   color: var(--accent);
 }
 
+.detail-table-wrap {
+  overflow-x: auto;
+  overflow-y: hidden;
+  scrollbar-gutter: stable;
+}
+
+.detail-data-table {
+  min-width: 1656px;
+  table-layout: fixed;
+}
+
+.detail-data-table th,
+.detail-data-table td {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  vertical-align: middle;
+}
+
+.detail-data-table th:nth-child(1),
+.detail-data-table td:nth-child(1) {
+  width: 116px;
+  max-width: 116px;
+}
+
+.detail-data-table th:nth-child(2),
+.detail-data-table td:nth-child(2) {
+  width: 96px;
+  max-width: 96px;
+}
+
+.detail-data-table th:nth-child(3),
+.detail-data-table td:nth-child(3) {
+  width: 128px;
+  max-width: 128px;
+}
+
+.detail-data-table th:nth-child(4),
+.detail-data-table td:nth-child(4),
+.detail-data-table th:nth-child(5),
+.detail-data-table td:nth-child(5) {
+  width: 170px;
+  max-width: 170px;
+}
+
+.detail-data-table th:nth-child(6),
+.detail-data-table td:nth-child(6) {
+  width: 136px;
+  max-width: 136px;
+}
+
+.detail-data-table th:nth-child(7),
+.detail-data-table td:nth-child(7) {
+  width: 72px;
+  max-width: 72px;
+}
+
+.detail-data-table th:nth-child(8),
+.detail-data-table td:nth-child(8) {
+  width: 52px;
+  max-width: 52px;
+}
+
+.detail-data-table th:nth-child(9),
+.detail-data-table td:nth-child(9) {
+  width: 240px;
+  max-width: 240px;
+}
+
+.detail-data-table th:nth-child(10),
+.detail-data-table td:nth-child(10) {
+  width: 96px;
+  max-width: 96px;
+}
+
+.detail-data-table th:nth-child(n+11),
+.detail-data-table td:nth-child(n+11) {
+  width: 82px;
+  max-width: 82px;
+}
+
+.detail-title-cell {
+  max-width: 240px;
+}
+
+.detail-title-link {
+  display: inline-block;
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  vertical-align: bottom;
+}
+
+.detail-sort-btn {
+  display: inline-grid;
+  place-items: center;
+  width: 22px;
+  height: 22px;
+  margin-left: 4px;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  background: var(--surface);
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 1;
+  cursor: pointer;
+}
+
+.detail-sort-btn:hover,
+.detail-sort-btn.is-active {
+  border-color: var(--brand);
+  background: var(--brand-light);
+  color: var(--brand);
+}
+
+.date-range-picker {
+  display: inline-flex;
+  align-items: center;
+  gap: 0;
+  height: 34px;
+  position: relative;
+}
+
+.date-range-button {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  height: 34px;
+  min-width: 146px;
+  padding: 0 var(--space-3);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-sm);
+  background: var(--surface);
+  color: var(--ink);
+  font-family: var(--font-body);
+  font-size: 12px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: border-color 0.15s, box-shadow 0.15s;
+}
+
+.date-range-button:hover,
+.date-range-button:focus-visible {
+  border-color: var(--brand);
+  box-shadow: 0 0 0 2px var(--brand-light);
+  outline: none;
+}
+
+.date-range-input {
+  display: none;
+}
+
+.date-range-caret {
+  color: var(--muted);
+  font-size: 10px;
+  font-weight: 500;
+  user-select: none;
+}
+
 /* Component: Button System */
 .btn-primary,
 .primary-button {
@@ -1574,6 +1754,31 @@ textarea {
     left: var(--space-2);
     max-width: none;
   }
+}
+
+/* === 3.0 merge: ranking inside detail === */
+
+.detail-ranking-toolbar {
+  display: flex;
+  gap: var(--space-1);
+}
+
+/* sort direction indicator on detail table column headers */
+.sort-arrow {
+  display: inline-block;
+  width: 16px;
+  font-size: 13px;
+  color: var(--muted);
+  margin-left: 4px;
+  vertical-align: middle;
+  opacity: 0.5;
+  pointer-events: none;
+}
+
+th[data-dir="asc"] .sort-arrow,
+th[data-dir="desc"] .sort-arrow {
+  opacity: 1;
+  color: var(--brand);
 }
 
 @media (max-width: 480px) {
