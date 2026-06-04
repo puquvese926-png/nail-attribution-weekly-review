@@ -2,6 +2,10 @@
   "name": "weekly-review-dashboard-local-sync",
   "private": true,
   "version": "1.0.0",
+  "scripts": {
+    "warehouse:upload:full": "node scripts/upload-warehouse-cache.js --full",
+    "warehouse:upload:incremental": "node scripts/upload-warehouse-cache.js --incremental --days 14"
+  },
   "dependencies": {
     "@netlify/blobs": "^10.7.9",
     "mysql2": "^3.11.5"

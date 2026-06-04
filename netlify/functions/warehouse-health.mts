@@ -16,7 +16,7 @@ export default async (req: Request) => {
     ]);
     const env = warehouseEnvStatus();
     return json({
-      ok: env.ok && Boolean(cacheMeta) && status?.status === "done",
+      ok: Boolean(cacheMeta) && status?.status === "done",
       env,
       cache: {
         exists: Boolean(cacheMeta),

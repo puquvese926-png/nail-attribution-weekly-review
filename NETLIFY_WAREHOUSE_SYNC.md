@@ -21,6 +21,36 @@
 
 本机预览仍走 `http://127.0.0.1:8787/api/posts/warehouse-refresh?full=1`，不受 Netlify API 影响。
 
+### 本地上传缓存
+
+当 Netlify 云端无法直连数仓时，使用本地电脑作为同步器：
+
+1. 本地脚本直连数仓。
+2. 把结果分片上传到 `/api/posts/warehouse-upload-chunk`。
+3. 上传完成后调用 `/api/posts/warehouse-upload-commit`。
+4. Netlify Functions 把分片合并写入 Blobs。
+5. 前端继续读取 `/api/posts/warehouse-cache?full=1`。
+
+首次执行全量：
+
+```powershell
+npm run warehouse:upload:full
+```
+
+日常执行增量，默认上传最近 14 天并合并进全量缓存：
+
+```powershell
+npm run warehouse:upload:incremental
+```
+
+安装 Windows 每日计划任务：
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\scripts\install-warehouse-upload-task.ps1 -At 08:30
+```
+
+本地上传不触发 Netlify production deploy，主要消耗少量 Functions 请求和 Blob/带宽额度。
+
 ## Netlify 环境变量
 
 在 Netlify 站点环境变量中配置：
@@ -29,8 +59,11 @@
 - `DB_PORT`
 - `DB_USER`
 - `DB_PASSWORD`
+- `WAREHOUSE_UPLOAD_TOKEN`
 
 这些变量只在 Netlify Functions 中读取，不会进入前端 JS。
+
+本地脚本还需要 `.env.local`，可从 `.env.local.example` 复制后填写。
 
 ## 健康检查
 
@@ -49,6 +82,8 @@
 - `netlify/functions/warehouse-status.mts`：同步状态查询。
 - `netlify/functions/warehouse-health.mts`：环境变量、缓存和同步状态健康检查。
 - `netlify/functions/warehouse-cache.mts`：缓存读取，使用流式响应承载全量 JSON。
+- `netlify/functions/warehouse-upload-chunk.mts`：本地同步器分片上传入口。
+- `netlify/functions/warehouse-upload-commit.mts`：合并分片并写入缓存，支持 `replace` 和 `merge-full`。
 - `netlify/functions/warehouse-sync.mts`：同步调试入口，直接查询并写缓存。
 - `netlify/functions/warehouse-refresh-scheduled.mts`：每日定时触发后台同步。Netlify scheduled function 不支持自定义 `/api` path，手动调试用 `/.netlify/functions/warehouse-refresh-scheduled`。
 - `netlify/functions/_shared/warehouse-api.mjs`：Netlify API 共用逻辑。
