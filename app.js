@@ -2261,7 +2261,7 @@ function renderWeekMeta(label,metaText,isImmature,isUp){const cls=["cohort-cell"
       const weekLabel = week ? `${week.start.getFullYear()}-W${`${weekOfYear(week.start)}`.padStart(2, "0")}` : "-";
       const productLine = asText(post.productLine1) || asText(post.productLine2) || "未标记品线";
       return {
-        title: asText(post.title) || "-",
+        title: asText(post.title) || shortDisplayUrl(post.link) || "-",
         link: asText(post.link),
         owner: asText(post.owner) || "未知",
         channel: asText(post.displayChannelName || post.channelName || post.platform) || "未知渠道",
@@ -2307,7 +2307,7 @@ function renderWeekMeta(label,metaText,isImmature,isUp){const cls=["cohort-cell"
       const weekLabel = week ? `${week.start.getFullYear()}-W${`${weekOfYear(week.start)}`.padStart(2, "0")}` : "-";
       const productLine = asText(post.productLine1) || asText(post.productLine2) || "未标记品线";
       return {
-        title: asText(post.title) || "-",
+        title: asText(post.title) || shortDisplayUrl(post.link) || "-",
         link: asText(post.link),
         owner: asText(post.owner) || "未知",
         channel: asText(post.displayChannelName || post.channelName || post.platform) || "未知渠道",
@@ -2531,7 +2531,7 @@ function renderWeekMeta(label,metaText,isImmature,isUp){const cls=["cohort-cell"
   function renderDetailTitleCell(row){
     const link = normalizePostUrl(row.link);
     if (!link) return "-";
-    const label = asText(row.title) || "-";
+    const label = asText(row.title) || shortDisplayUrl(link) || "-";
     if (!label) return "-";
     return `<a class="link-cell detail-title-link" href="${escapeHtml(link)}" target="_blank" rel="noopener noreferrer" title="${escapeHtml(label)}">${escapeHtml(label)}</a>`;
   }
@@ -3006,7 +3006,7 @@ function renderWeekMeta(label,metaText,isImmature,isUp){const cls=["cohort-cell"
         topic: post.normalizedTopic || normalizeDimension(post.contentTopic) || "未知",
         format: post.normalizedFormat || normalizeContentFormat(post.contentFormat) || "未知",
         featuredQuality: asText(post.featuredQuality) || "0",
-        title: asText(post.title),
+        title: asText(post.title) || shortDisplayUrl(post.link),
         owner: ownerDisplay.toLowerCase(),
         ownerDisplay,
         link: asText(post.link),
@@ -4051,7 +4051,7 @@ function renderWeekMeta(label,metaText,isImmature,isUp){const cls=["cohort-cell"
       const metrics = diffMetrics(post, reviewWindow.start, reviewWindow.end);
       return {
         id: post.id || `post-${hashText(post.link || post.title || post.publishDate)}`,
-        title: asText(post.title) || "-",
+        title: asText(post.title) || shortDisplayUrl(post.link) || "-",
         link: post.link || "",
         owner: post.owner || "未知",
         channel: post.displayChannelName || post.channelName || post.platform || "未知渠道",
