@@ -81,11 +81,35 @@
       state.importMeta = restored.source.importMeta || { fileName: "上次导入文件", savedAt: restored.savedAt || "" };
       state.importAudit = restored.source.importAudit || null;
     }
+    await loadCloudWarehouseCacheOnBoot();
     setDefaultRangesFromSource();
     restoreOffsiteStateFromCache();
     recompute();
     applyCachedOffsiteForCurrentRange();
     render();
+  }
+
+  async function loadCloudWarehouseCacheOnBoot(){
+    if (!shouldUseCloudWarehouseApi()) return;
+    try {
+      const nextSource = await fetchWarehouseCacheSource();
+      if (!nextSource?.posts?.length) return;
+      const prepared = {
+        ...nextSource,
+        dtcSection: source.dtcSection
+      };
+      const audit = buildWarehousePreviewAudit(prepared);
+      source = mergeImportedSource(prepared);
+      state.sourceLabel = "数仓数据";
+      state.importMeta = prepared.importMeta || { fileName: "云端数仓缓存", savedAt: formatDate(new Date()) };
+      state.importAudit = audit || prepared.audit || null;
+      await savePersistedImport({
+        ...source,
+        importAudit: state.importAudit
+      });
+    } catch (error) {
+      console.warn("loadCloudWarehouseCacheOnBoot failed", error);
+    }
   }
 
   function bindGlobalEvents(){
@@ -2755,6 +2779,13 @@ function renderWeekMeta(label,metaText,isImmature,isUp){const cls=["cohort-cell"
   async function fetchWarehouseSourceFromCloud(signal, button){
     if (button) button.textContent = "读取缓存...";
     showToast("正在读取云端数仓缓存；线上同步由本机定时任务更新。");
+    const nextSource = await fetchWarehouseCacheSource(signal);
+    const range = nextSource?.importMeta?.range ? ` · ${nextSource.importMeta.range}` : "";
+    showToast(`云端缓存读取完成${range}`);
+    return nextSource;
+  }
+
+  async function fetchWarehouseCacheSource(signal){
     const cacheResponse = await fetch(`/api/posts/warehouse-cache?full=1&t=${Date.now()}`, {
       signal,
       cache: "no-store"
@@ -2763,8 +2794,6 @@ function renderWeekMeta(label,metaText,isImmature,isUp){const cls=["cohort-cell"
     if (!cacheResponse.ok || !cachePayload?.ok || !cachePayload.source?.posts) {
       throw new Error(cachePayload?.error || `云端缓存服务返回 ${cacheResponse.status}`);
     }
-    const range = cachePayload.source?.importMeta?.range ? ` · ${cachePayload.source.importMeta.range}` : "";
-    showToast(`云端缓存读取完成${range}`);
     return cachePayload.source;
   }
 
