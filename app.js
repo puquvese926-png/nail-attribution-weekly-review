@@ -191,7 +191,7 @@
   function renderNav(){
     dom.nav.innerHTML = VIEWS.map(view => `
       <button class="nav-tab ${view.key === state.view ? "is-active" : ""}" type="button" data-view="${view.key}" aria-current="${view.key === state.view ? "page" : "false"}">
-        ${escapeHtml(view.short)} · ${escapeHtml(view.label)}
+        ${escapeHtml(view.label)}
       </button>
     `).join("");
   }
@@ -1790,14 +1790,20 @@ function buildMetricCards(tabKey){
   }
 
   if (tabKey === "detail") {
-    const weekPosts = posts.filter(p => p.publishDateObj && p.publishDateObj >= reviewWindow.start && p.publishDateObj <= reviewWindow.end);
+    const detailPosts = all.scoped || [];
+    const detailTotals = sumPostsForRange(detailPosts, reviewWindow.start, reviewWindow.end);
+    const detailPreviousTotals = sumPostsForRange(detailPosts, previousWindow.start, previousWindow.end);
+    const detailExp = detailTotals.exposure || 0;
+    const detailPrevExp = detailPreviousTotals.exposure || 0;
+    const detailWowExp = safeWoW(detailExp, detailPrevExp);
+    const weekPosts = detailPosts.filter(p => p.publishDateObj && p.publishDateObj >= reviewWindow.start && p.publishDateObj <= reviewWindow.end);
     const curPosts = weekPosts.length;
-    const prevWeekPosts = posts.filter(p => p.publishDateObj && p.publishDateObj >= previousWindow.start && p.publishDateObj <= previousWindow.end);
+    const prevWeekPosts = detailPosts.filter(p => p.publishDateObj && p.publishDateObj >= previousWindow.start && p.publishDateObj <= previousWindow.end);
     const wowPosts = safeWoW(curPosts, prevWeekPosts.length);
-    const top5 = all.poolPosts.map(p => ({ m: diffMetrics(p, reviewWindow.start, reviewWindow.end) })).sort((a, b) => b.m.exposure - a.m.exposure).slice(0, 5);
-    const top5Share = safeRate(sum(top5, p => p.m.exposure), curExp);
-    const quality = all.poolPosts.filter(p => (asText(p.featuredQuality) === "1.0" || asText(p.featuredQuality) === "1")).length;
-    return `<div class="metric-grid">${cardWow("复盘周期发布帖", curPosts, wowPosts, publishFoot)}${card("Top5曝光占比", formatPct(top5Share), `${addedFoot} · 按曝光排序`)}${card("批次优质内容", quality, `批次 ${metricBatchLabel} · 导入字段标记`)}${cardWow("本周总曝光", curExp, wowExp, totalFoot)}</div>`;
+    const top5 = detailPosts.map(p => ({ m: diffMetrics(p, reviewWindow.start, reviewWindow.end) })).sort((a, b) => b.m.exposure - a.m.exposure).slice(0, 5);
+    const top5Share = safeRate(sum(top5, p => p.m.exposure), detailExp);
+    const quality = detailPosts.filter(p => (asText(p.featuredQuality) === "1.0" || asText(p.featuredQuality) === "1")).length;
+    return `<div class="metric-grid">${cardWow("复盘周期发布帖", curPosts, wowPosts, publishFoot)}${card("Top5曝光占比", formatPct(top5Share), `${addedFoot} · 按曝光排序`)}${card("全量优质内容", quality, `全量帖子 · 导入字段标记`)}${cardWow("本周总曝光", detailExp, detailWowExp, `全量帖子 · ${metricRangeLabel}新增`)}</div>`;
   }
   return "";
   } catch(e) { console.error("buildMetricCards error", e); return ""; }
@@ -1891,19 +1897,26 @@ function buildNarrative(tabKey){
   }
 
   else if (tabKey === "detail") {
-    const weekPosts = posts.filter(p => p.publishDateObj && p.publishDateObj >= reviewWindow.start && p.publishDateObj <= reviewWindow.end);
+    const detailPosts = all.scoped || [];
+    const detailTotals = sumPostsForRange(detailPosts, reviewWindow.start, reviewWindow.end);
+    const detailPreviousTotals = sumPostsForRange(detailPosts, previousWindow.start, previousWindow.end);
+    const detailExp = detailTotals.exposure || 0;
+    const detailPrevExp = detailPreviousTotals.exposure || 0;
+    const detailWowExp = safeWoW(detailExp, detailPrevExp);
+    const weekPosts = detailPosts.filter(p => p.publishDateObj && p.publishDateObj >= reviewWindow.start && p.publishDateObj <= reviewWindow.end);
     const curPosts = weekPosts.length;
-    const top5 = all.poolPosts.map(p => ({ ...p, m: diffMetrics(p, reviewWindow.start, reviewWindow.end) })).sort((a, b) => b.m.exposure - a.m.exposure).slice(0, 5);
-    const top5Share = safeRate(sum(top5, p => p.m.exposure), curExp);
-    const top20 = all.poolPosts.map(p => ({ ...p, m: diffMetrics(p, reviewWindow.start, reviewWindow.end) })).sort((a, b) => b.m.exposure - a.m.exposure).slice(0, 20);
-    const top20Share = safeRate(sum(top20, p => p.m.exposure), curExp);
-    const quality = all.poolPosts.filter(p => (asText(p.featuredQuality) === "1.0" || asText(p.featuredQuality) === "1")).length;
-    const topics = new Set(all.poolPosts.map(p => asText(p.contentTopic || p.normalizedTopic || "").trim()).filter(Boolean));
-    const topChannel = all.channelRows[0];
-    lines.push(`复盘周期新发布 ${formatInteger(curPosts)} 帖；批次内帖子在复盘周期新增曝光 ${formatCompact(curExp)}，环比${wowExp > 0 ? "增长" : wowExp < 0 ? "下降" : "持平"} ${formatPct(Math.abs(wowExp))}。可切换下方子视图查看：帖子明细 / Top 帖子 / 优质内容 / 主题分析。`);
+    const top5 = detailPosts.map(p => ({ ...p, m: diffMetrics(p, reviewWindow.start, reviewWindow.end) })).sort((a, b) => b.m.exposure - a.m.exposure).slice(0, 5);
+    const top5Share = safeRate(sum(top5, p => p.m.exposure), detailExp);
+    const top20 = detailPosts.map(p => ({ ...p, m: diffMetrics(p, reviewWindow.start, reviewWindow.end) })).sort((a, b) => b.m.exposure - a.m.exposure).slice(0, 20);
+    const top20Share = safeRate(sum(top20, p => p.m.exposure), detailExp);
+    const quality = detailPosts.filter(p => (asText(p.featuredQuality) === "1.0" || asText(p.featuredQuality) === "1")).length;
+    const topics = new Set(detailPosts.map(p => asText(p.contentTopic || p.normalizedTopic || "").trim()).filter(Boolean));
+    const detailChannelRows = buildChannelRows(detailPosts, detailTotals);
+    const topChannel = detailChannelRows[0];
+    lines.push(`当前帖子明细展示全量 ${formatInteger(detailPosts.length)} 帖；复盘周期新发布 ${formatInteger(curPosts)} 帖，全量帖子在复盘周期新增曝光 ${formatCompact(detailExp)}，环比${detailWowExp > 0 ? "增长" : detailWowExp < 0 ? "下降" : "持平"} ${formatPct(Math.abs(detailWowExp))}。可切换下方子视图查看：帖子明细 / Top 帖子 / 优质内容 / 主题分析。`);
     lines.push(`按复盘周期新增曝光排序，Top5 占比 ${formatPct(top5Share)}（Top20 占比 ${formatPct(top20Share)}），${top5Share >= 0.1 ? "头部内容集中度较高。" : top5Share >= 0.05 ? "头部内容有一定集中度。" : "曝光分布相对分散。"}`);
-    lines.push(`批次优质内容 ${formatInteger(quality)} 条${all.currentPostCount > 0 ? "，占有表现帖 " + formatPct(safeRate(quality, all.currentPostCount)) : ""}。${topics.size > 0 ? "覆盖 " + formatInteger(topics.size) + " 个主题。" : ""}`);
-    if (topChannel) lines.push(`按复盘周期新增曝光看，渠道最高为 ${topChannel.label}，占比 ${formatPct(safeRate(topChannel.exposure, curExp))}。`);
+    lines.push(`全量优质内容 ${formatInteger(quality)} 条，占全量帖子 ${formatPct(safeRate(quality, detailPosts.length))}。${topics.size > 0 ? "覆盖 " + formatInteger(topics.size) + " 个主题。" : ""}`);
+    if (topChannel) lines.push(`按复盘周期新增曝光看，渠道最高为 ${topChannel.label}，占比 ${formatPct(safeRate(topChannel.exposure, detailExp))}。`);
     if (state.importAudit) lines.push(`数据来源：${escapeHtml(state.importAudit.fileName || "导入文件")}，含 ${formatInteger(state.importAudit.acceptedRows)} 条有效记录。`);
     else lines.push("当前为内置样例数据，导入 Excel 后显示真实数据。");
   }
@@ -2421,6 +2434,8 @@ function renderWeekMeta(label,metaText,isImmature,isUp){const cls=["cohort-cell"
     const root = dom.stage.querySelector(`[data-detail-table-id="${tableId}"]`);
     const store = (window.__weeklyDetailTables || {})[tableId];
     if (!root || !store) return;
+    state._activeFilters = {};
+    closeFilterPopover();
     root.querySelectorAll(".filter-bar select[data-filter-key]").forEach(select => {
       select.value = "all";
     });
@@ -2438,6 +2453,7 @@ function renderWeekMeta(label,metaText,isImmature,isUp){const cls=["cohort-cell"
     delete root.dataset.sortDir;
     updateDetailSortControls(root, null, null);
     store.filteredRows = store.allRows.slice();
+    updateFilterTags(root);
     updateDetailTable(tableId, store.filteredRows, 0);
   }
 
@@ -2678,6 +2694,10 @@ function renderWeekMeta(label,metaText,isImmature,isUp){const cls=["cohort-cell"
   async function refreshWarehousePosts(button){
     const endpoint = "http://127.0.0.1:8787/api/posts/warehouse-refresh";
     const label = button ? button.textContent : "";
+    const controller = new AbortController();
+    let waitTimer = null;
+    let slowTimer = null;
+    let timeoutTimer = null;
     if (button) {
       button.disabled = true;
       button.textContent = "同步中...";
@@ -2685,19 +2705,33 @@ function renderWeekMeta(label,metaText,isImmature,isUp){const cls=["cohort-cell"
     showToast("正在只读查询数仓全量帖子数据...");
     try {
       const url = `${endpoint}?full=1`;
-      const response = await fetch(url);
+      waitTimer = window.setTimeout(() => {
+        if (button) button.textContent = "仍在查询...";
+        showToast("数仓仍在查询中，通常需要 20-60 秒。");
+      }, 5000);
+      slowTimer = window.setTimeout(() => {
+        if (button) button.textContent = "查询较慢...";
+        showToast("数仓查询仍未完成，请保持页面打开；超过 90 秒将自动判定超时。");
+      }, 60000);
+      timeoutTimer = window.setTimeout(() => controller.abort(), 90000);
+      const response = await fetch(url, { signal: controller.signal, cache: "no-store" });
       const payload = await response.json().catch(() => null);
       if (!response.ok || !payload?.ok || !payload.source?.posts) {
         throw new Error(payload?.error || `本地同步服务返回 ${response.status}`);
       }
       showWarehousePreview(payload.source);
     } catch (error) {
-      const message = error && error.name === "TypeError"
-        ? "本地同步服务未启动，请先运行 start-dashboard-with-offsite-sync.cmd 打开看板。"
-        : (error.message || error);
+      const message = error && error.name === "AbortError"
+        ? "数仓查询超过 90 秒仍未返回，请稍后重试或检查本地同步服务。"
+        : error && error.name === "TypeError"
+          ? "本地同步服务未启动，请先运行 start-dashboard-with-offsite-sync.cmd 打开看板。"
+          : (error.message || error);
       showToast(`数仓同步失败：${message}`);
       console.error("refreshWarehousePosts error", error);
     } finally {
+      window.clearTimeout(waitTimer);
+      window.clearTimeout(slowTimer);
+      window.clearTimeout(timeoutTimer);
       if (button) {
         button.disabled = false;
         button.textContent = label || "同步数仓";
@@ -2859,7 +2893,7 @@ function renderWeekMeta(label,metaText,isImmature,isUp){const cls=["cohort-cell"
 
   function renderDetail(){
     const all = deriveForScope("all");
-    const poolPosts = all.poolPosts || [];
+    const poolPosts = all.scoped || [];
     const tableId = "detail-main";
     const rows = poolPosts.map((post, index) => {
       const metrics = diffMetrics(post, reviewWindow.start, reviewWindow.end);
@@ -2921,7 +2955,7 @@ function renderWeekMeta(label,metaText,isImmature,isUp){const cls=["cohort-cell"
     };
     return `${buildMetricCards("detail")}${buildNarrative("detail")}<section class="panel" data-detail-table-id="${tableId}" data-sort-col-idx="11" data-sort-dir="desc">
       <div class="panel-head">
-        <div class="panel-title"><h3>帖子明细</h3><p>完整可筛选表格，支持下钻和导出。含内容排行榜子视图。</p></div>
+        <div class="panel-title"><h3>帖子明细</h3><p>默认展示全量帖子；发布时间、渠道、品线等筛选只在本表内收窄结果。</p></div>
         <div style="display:flex;flex-direction:column;gap:6px;align-items:flex-end;">
           <div style="display:flex;gap:8px;">
             <button class="button-sm" type="button" data-action="refresh-warehouse-posts">同步数仓</button>
@@ -2998,14 +3032,14 @@ function renderWeekMeta(label,metaText,isImmature,isUp){const cls=["cohort-cell"
         </div>`;
       })()}
       <div class="detail-stats" style="display:flex;align-items:center;justify-content:space-between;">
-        <span>共 ${formatInteger(rows.length)} 帖 · 总曝光 ${formatCompact(sum(rows, row => row.exposure))} · 总互动 ${formatCompact(sum(rows, row => row.interaction))}</span>
+        <span>全量共 ${formatInteger(rows.length)} 帖 · 复盘周期曝光 ${formatCompact(sum(rows, row => row.exposure))} · 复盘周期互动 ${formatCompact(sum(rows, row => row.interaction))}</span>
         <span style="font-size:11px;color:var(--muted);">每页 25 条</span>
       </div>
     </section>${renderOffsiteDetailSection()}`;
   }
   function normalizeCohortMatrix(rows){return (rows||[]).map(row=>({key:row.cohortWeek||row.key,publishWeekStart:row.publishWeekStart,publishWeekEnd:row.publishWeekEnd,postCount:row.postCount||0,matureWeeks:row.matureWeeks||0,maturity:row.matureWeeks>=4,cumulativeExposure:row.totalExposure||0,interactionRate:row.interactionRate||0,maturityText:`成熟 ${formatInteger(row.matureWeeks||0)}/4 周`,weeks:(row.windows||[]).map(w=>({exposure:w.exposure||0,interaction:w.interaction||0,maturityText:w.mature?"成熟":"未成熟",isImmature:!w.mature}))}));}
 
-  function renderCohort(){const all=deriveForScope("all"),poolPosts=all.poolPosts,allPosts=preprocessPosts(source.posts||[]),reviewStart=reviewWindow.start,reviewEnd=reviewWindow.end;const breakdown=buildWeekBreakdown(poolPosts,reviewStart,reviewEnd);const matrix=normalizeCohortMatrix(buildCohortMatrix(allPosts,reviewEnd));const reviewWeekKey = reviewWindow.start.getFullYear() + '-W' + String(weekOfYear(reviewWindow.start)).padStart(2, '0');const currentWeekRow = matrix.find(function(row) { return row.key === reviewWeekKey; });const breakdownRows=breakdown.rows||[];const maxBreakdownExposure=Math.max(0,...breakdownRows.map(row=>row.exposure||0));const yMax=maxBreakdownExposure>0?maxBreakdownExposure:1;const yTicks=[1,0.75,0.5,0.25,0].map(tick=>`<span>${formatCompact(yMax*tick)}</span>`).join("");const breakdownBars=breakdownRows.map(row=>{const pct=Math.max(2,Math.round((row.exposureShare||0)*100));const isCurrentWeek=row.key===matrix[0]?.key;const isLastWeek=row.key===matrix[1]?.key;const barCls=["week-breakdown-bar"];if(isCurrentWeek)barCls.push("is-current");if(isLastWeek)barCls.push("is-last");const heightPct=Math.max(8,safeRate(row.exposure||0,yMax)*100);return `<div class="week-breakdown-item"><div class="week-breakdown-meta">${formatCompact(row.exposure||0)}</div><div class="week-breakdown-meta">${formatPct(row.exposureShare||0)}</div><div class="${barCls.join(" ")}" style="height:${heightPct.toFixed(1)}%;" onmouseenter="this.style.opacity='0.8'" onmouseleave="this.style.opacity='1'"></div></div>`;}).join("");const breakdownLabels=breakdownRows.map(row=>`<div class="week-breakdown-label">${escapeHtml(row.key||"更早")}</div>`).join("");const breakdownHtml=breakdownRows.length?`<div class="week-breakdown-chart"><div class="week-breakdown-y-axis">${yTicks}</div><div class="week-breakdown-plot">${breakdownBars}</div><div class="week-breakdown-x-axis">${breakdownLabels}</div></div>`:"";const topBreakdownWeek=breakdownRows.reduce((best,row)=>(row.exposure||0)>(best?.exposure||0)?row:best,null);const matrixRows=matrix.map((row,ri)=>{const weekCells=row.weeks.map((w,wi)=>{if(!(w.exposure>0||w.interaction>0))return `<td class="cohort-cell is-empty">-</td>`;const prev=ri>0?matrix[ri-1]?.weeks?.[wi]:null;const upArrow=!!(prev&&w.exposure>(prev.exposure||0)*1.3);return `<td>${renderWeekMeta(formatCompact(w.exposure),w.maturityText,w.isImmature,upArrow)}</td>`;}).join("");return `<tr class="cohort-row ${ri===0?"is-current-week":""}" data-publish-week="${escapeHtml(row.key)}"><td style="cursor:pointer;" data-action="expand-publish-week" data-week-key="${escapeHtml(row.key)}"><strong>${escapeHtml(row.key)}${ri===0?" (本周)":""}</strong><div class="cohort-cell-maturity">${formatDate(row.publishWeekStart)} ~ ${formatDate(row.publishWeekEnd)} · ${escapeHtml(row.maturityText)} · ${formatInteger(row.postCount)}帖</div></td>${weekCells}<td><div class="cohort-cell"><div class="cohort-cell-value">${formatCompact(row.cumulativeExposure)}</div><div class="cohort-cell-maturity">累计曝光</div></div></td><td><div class="cohort-cell"><div class="cohort-cell-value">${formatPct(row.interactionRate)}</div><div class="cohort-cell-maturity">互动率</div></div></td></tr>`;}).join("");return `${buildMetricCards("cohort")}${buildNarrative("cohort")}<section class="panel"><div class="panel-head"><div class="panel-title"><h3>本周总曝光拆解</h3></div></div><p style="font-size:12px;color:var(--muted);margin-bottom:10px;">按发布周拆解本周的总曝光贡献。</p>${breakdownHtml?`<div class="breakdown-layout"><div class="breakdown-left"><div class="week-breakdown">${breakdownHtml}</div></div><div class="breakdown-right"><div class="breakdown-side-card"><div class="label">📌 最大贡献周</div><div class="value">${escapeHtml(topBreakdownWeek?.key || "暂无")} · ${topBreakdownWeek?.exposure ? formatCompact(topBreakdownWeek.exposure) : "-"} · ${topBreakdownWeek?.exposureShare ? formatPct(topBreakdownWeek.exposureShare) : "-"}</div><div class="note">${topBreakdownWeek?.key === matrix[0]?.key ? "本周发布帖子贡献最大，新帖表现强劲" : topBreakdownWeek?.key === (matrix[1]?.key || "") ? "上周帖子正处于爆发峰值" : "历史帖子仍在持续释放曝光"}</div></div><div class="breakdown-side-card"><div class="label">📊 新老帖占比</div><div class="mini-stacked-bar"><span class="seg-current" style="width:${((breakdown.rows.find(r=>r.key===matrix[0]?.key)?.exposureShare||0)*100).toFixed(1)}%"></span><span class="seg-last" style="width:${((breakdown.rows.find(r=>r.key===matrix[1]?.key)?.exposureShare||0)*100).toFixed(1)}%"></span><span class="seg-older" style="flex:1"></span></div><div class="mini-legend"><span style="font-size:11px;"><span style="display:inline-block;width:8px;height:8px;background:var(--blue);border-radius:2px;vertical-align:middle;"></span> 本周帖 ${breakdown.rows.find(r=>r.key===matrix[0]?.key)?.exposure ? formatCompact(breakdown.rows.find(r=>r.key===matrix[0]?.key).exposure) : "-"}</span><br><span style="font-size:11px;"><span style="display:inline-block;width:8px;height:8px;background:var(--up);border-radius:2px;vertical-align:middle;"></span> 上周帖 ${breakdown.rows.find(r=>r.key===matrix[1]?.key)?.exposure ? formatCompact(breakdown.rows.find(r=>r.key===matrix[1]?.key).exposure) : "-"}</span><br><span style="font-size:11px;"><span style="display:inline-block;width:8px;height:8px;background:var(--line);border-radius:2px;vertical-align:middle;"></span> 更早 ${(()=>{const c=(breakdown.rows.find(r=>r.key===matrix[0]?.key)?.exposureShare||0)+(breakdown.rows.find(r=>r.key===matrix[1]?.key)?.exposureShare||0);return formatPct(Math.max(0,1-c));})()}</span></div></div><div class="breakdown-side-card"><div class="label">⚡ 数据成熟度</div><div class="value">${currentWeekRow ? escapeHtml(currentWeekRow.maturityText) : "该周无帖"}</div><div class="note" style="color:var(--warn);">${!currentWeekRow ? "选中周无发布帖，无法评估成熟度" : currentWeekRow.maturity ? "该周帖子 4 周生命周期已全部走完，数据可做结论" : "该周帖子仅走完 " + currentWeekRow.matureWeeks + "/4 周，结论需谨慎"}</div></div></div></div>`:renderEmpty("当前周期暂无可拆解曝光数据。")}<div class="cohort-legend"><span><b style="color:var(--warn)">■</b> 本周占比 &lt; 30% = 新帖数据未跑满</span><span><b style="color:var(--up)">■</b> 上周占比 &gt; 30% = 上周有爆款</span></div></section><section class="panel"><div class="panel-head"><div class="panel-title"><h3>Cohort 曝光矩阵</h3><p>点击发布周可展开右侧详情。</p></div></div>${matrix.length?`<div class="table-wrap"><table class="cohort-table"><thead><tr><th>发布周</th><th>第1周<br>发布后1-7天</th><th>第2周<br>发布后8-14天</th><th>第3周<br>发布后15-21天</th><th>第4周<br>发布后22-28天</th><th>累计曝光</th><th>互动率</th></tr></thead><tbody>${matrixRows}</tbody></table></div>`:renderEmpty("暂无 Cohort 矩阵数据。")}</section>`;}
+  function renderCohort(){const all=deriveForScope("all"),poolPosts=all.poolPosts,allPosts=preprocessPosts(source.posts||[]),reviewStart=reviewWindow.start,reviewEnd=reviewWindow.end;const breakdown=buildWeekBreakdown(poolPosts,reviewStart,reviewEnd);const cohortPosts=allPosts.filter(post=>post&&post.publishDateObj&&post.publishDateObj<=reviewEnd);const matrix=normalizeCohortMatrix(buildCohortMatrix(cohortPosts,reviewEnd));const reviewWeekKey = reviewWindow.start.getFullYear() + '-W' + String(weekOfYear(reviewWindow.start)).padStart(2, '0');const previousReviewWeek=naturalWeekRange(addDays(reviewWindow.start,-7));const previousReviewWeekKey=previousReviewWeek.start.getFullYear()+'-W'+String(weekOfYear(previousReviewWeek.start)).padStart(2,'0');const currentWeekRow = matrix.find(function(row) { return row.key === reviewWeekKey; });const breakdownRows=breakdown.rows||[];const maxBreakdownExposure=Math.max(0,...breakdownRows.map(row=>row.exposure||0));const yMax=maxBreakdownExposure>0?maxBreakdownExposure:1;const yTicks=[1,0.75,0.5,0.25,0].map(tick=>`<span>${formatCompact(yMax*tick)}</span>`).join("");const breakdownBars=breakdownRows.map(row=>{const pct=Math.max(2,Math.round((row.exposureShare||0)*100));const isCurrentWeek=row.key===reviewWeekKey;const isLastWeek=row.key===previousReviewWeekKey;const barCls=["week-breakdown-bar"];if(isCurrentWeek)barCls.push("is-current");if(isLastWeek)barCls.push("is-last");const heightPct=Math.max(8,safeRate(row.exposure||0,yMax)*100);return `<div class="week-breakdown-item"><div class="week-breakdown-meta">${formatCompact(row.exposure||0)}</div><div class="week-breakdown-meta">${formatPct(row.exposureShare||0)}</div><div class="${barCls.join(" ")}" style="height:${heightPct.toFixed(1)}%;" onmouseenter="this.style.opacity='0.8'" onmouseleave="this.style.opacity='1'"></div></div>`;}).join("");const breakdownLabels=breakdownRows.map(row=>`<div class="week-breakdown-label">${escapeHtml(row.key||"更早")}</div>`).join("");const breakdownHtml=breakdownRows.length?`<div class="week-breakdown-chart"><div class="week-breakdown-y-axis">${yTicks}</div><div class="week-breakdown-plot">${breakdownBars}</div><div class="week-breakdown-x-axis">${breakdownLabels}</div></div>`:"";const topBreakdownWeek=breakdownRows.reduce((best,row)=>(row.exposure||0)>(best?.exposure||0)?row:best,null);const matrixRows=matrix.map((row,ri)=>{const weekCells=row.weeks.map((w,wi)=>{if(!(w.exposure>0||w.interaction>0))return `<td class="cohort-cell is-empty">-</td>`;const prev=ri>0?matrix[ri-1]?.weeks?.[wi]:null;const upArrow=!!(prev&&w.exposure>(prev.exposure||0)*1.3);return `<td>${renderWeekMeta(formatCompact(w.exposure),w.maturityText,w.isImmature,upArrow)}</td>`;}).join("");return `<tr class="cohort-row ${row.key===reviewWeekKey?"is-current-week":""}" data-publish-week="${escapeHtml(row.key)}"><td style="cursor:pointer;" data-action="expand-publish-week" data-week-key="${escapeHtml(row.key)}"><strong>${escapeHtml(row.key)}${row.key===reviewWeekKey?" (复盘周期发布周)":""}</strong><div class="cohort-cell-maturity">${formatDate(row.publishWeekStart)} ~ ${formatDate(row.publishWeekEnd)} · ${escapeHtml(row.maturityText)} · ${formatInteger(row.postCount)}帖</div></td>${weekCells}<td><div class="cohort-cell"><div class="cohort-cell-value">${formatCompact(row.cumulativeExposure)}</div><div class="cohort-cell-maturity">累计曝光</div></div></td><td><div class="cohort-cell"><div class="cohort-cell-value">${formatPct(row.interactionRate)}</div><div class="cohort-cell-maturity">互动率</div></div></td></tr>`;}).join("");return `${buildMetricCards("cohort")}${buildNarrative("cohort")}<section class="panel"><div class="panel-head"><div class="panel-title"><h3>本周总曝光拆解</h3></div></div><p style="font-size:12px;color:var(--muted);margin-bottom:10px;">按发布周拆解本周的总曝光贡献。</p>${breakdownHtml?`<div class="breakdown-layout"><div class="breakdown-left"><div class="week-breakdown">${breakdownHtml}</div></div><div class="breakdown-right"><div class="breakdown-side-card"><div class="label">📌 最大贡献周</div><div class="value">${escapeHtml(topBreakdownWeek?.key || "暂无")} · ${topBreakdownWeek?.exposure ? formatCompact(topBreakdownWeek.exposure) : "-"} · ${topBreakdownWeek?.exposureShare ? formatPct(topBreakdownWeek.exposureShare) : "-"}</div><div class="note">${topBreakdownWeek?.key === reviewWeekKey ? "复盘周期发布周贡献最大，新帖表现强劲" : topBreakdownWeek?.key === previousReviewWeekKey ? "上一发布周正处于爆发峰值" : "历史帖子仍在持续释放曝光"}</div></div><div class="breakdown-side-card"><div class="label">📊 新老帖占比</div><div class="mini-stacked-bar"><span class="seg-current" style="width:${((breakdown.rows.find(r=>r.key===reviewWeekKey)?.exposureShare||0)*100).toFixed(1)}%"></span><span class="seg-last" style="width:${((breakdown.rows.find(r=>r.key===previousReviewWeekKey)?.exposureShare||0)*100).toFixed(1)}%"></span><span class="seg-older" style="flex:1"></span></div><div class="mini-legend"><span style="font-size:11px;"><span style="display:inline-block;width:8px;height:8px;background:var(--blue);border-radius:2px;vertical-align:middle;"></span> 本周帖 ${breakdown.rows.find(r=>r.key===reviewWeekKey)?.exposure ? formatCompact(breakdown.rows.find(r=>r.key===reviewWeekKey).exposure) : "-"}</span><br><span style="font-size:11px;"><span style="display:inline-block;width:8px;height:8px;background:var(--up);border-radius:2px;vertical-align:middle;"></span> 上周帖 ${breakdown.rows.find(r=>r.key===previousReviewWeekKey)?.exposure ? formatCompact(breakdown.rows.find(r=>r.key===previousReviewWeekKey).exposure) : "-"}</span><br><span style="font-size:11px;"><span style="display:inline-block;width:8px;height:8px;background:var(--line);border-radius:2px;vertical-align:middle;"></span> 更早 ${(()=>{const c=(breakdown.rows.find(r=>r.key===reviewWeekKey)?.exposureShare||0)+(breakdown.rows.find(r=>r.key===previousReviewWeekKey)?.exposureShare||0);return formatPct(Math.max(0,1-c));})()}</span></div></div><div class="breakdown-side-card"><div class="label">⚡ 数据成熟度</div><div class="value">${currentWeekRow ? escapeHtml(currentWeekRow.maturityText) : "该周无帖"}</div><div class="note" style="color:var(--warn);">${!currentWeekRow ? "选中周无发布帖，无法评估成熟度" : currentWeekRow.maturity ? "该周帖子 4 周生命周期已全部走完，数据可做结论" : "该周帖子仅走完 " + currentWeekRow.matureWeeks + "/4 周，结论需谨慎"}</div></div></div></div>`:renderEmpty("当前周期暂无可拆解曝光数据。")}<div class="cohort-legend"><span><b style="color:var(--warn)">■</b> 本周占比 &lt; 30% = 新帖数据未跑满</span><span><b style="color:var(--up)">■</b> 上周占比 &gt; 30% = 上周有爆款</span></div></section><section class="panel"><div class="panel-head"><div class="panel-title"><h3>Cohort 曝光矩阵</h3><p>点击发布周可展开右侧详情。</p></div></div>${matrix.length?`<div class="table-wrap"><table class="cohort-table"><thead><tr><th>发布周</th><th>第1周<br>发布后1-7天</th><th>第2周<br>发布后8-14天</th><th>第3周<br>发布后15-21天</th><th>第4周<br>发布后22-28天</th><th>累计曝光</th><th>互动率</th></tr></thead><tbody>${matrixRows}</tbody></table></div>`:renderEmpty("暂无 Cohort 矩阵数据。")}</section>`;}
 
   function renderPublishWeekDetail(weekKey,matrixRow,poolPosts){
     const panel=document.getElementById("publish-week-detail");
@@ -4857,6 +4891,8 @@ function renderWeekMeta(label,metaText,isImmature,isUp){const cls=["cohort-cell"
     `;
     modalRoot.querySelectorAll("[data-modal-close]").forEach(button => button.addEventListener("click", closeModal));
     modalRoot.addEventListener("pointerdown", modalOutsideClose);
+    document.removeEventListener("keydown", modalEscapeClose);
+    document.addEventListener("keydown", modalEscapeClose);
     if (typeof config.onMount === "function") config.onMount(modalRoot);
   }
 
@@ -4866,6 +4902,7 @@ function renderWeekMeta(label,metaText,isImmature,isUp){const cls=["cohort-cell"
     modalRoot.classList.remove("is-open");
     modalRoot.innerHTML = "";
     modalRoot.removeEventListener("pointerdown", modalOutsideClose);
+    document.removeEventListener("keydown", modalEscapeClose);
   }
 
   function modalOutsideClose(event){
@@ -5234,8 +5271,4 @@ function renderWeekMeta(label,metaText,isImmature,isUp){const cls=["cohort-cell"
     }[ch]));
   }
 })();
-
-
-
-
 

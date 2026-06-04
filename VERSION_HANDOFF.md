@@ -47,21 +47,20 @@ source (原始数据)
             → HTML string → dom.stage.innerHTML
 ```
 
-### 2.2 5 个视图（Tabs）
+### 2.2 4 个视图（Tabs）
 
 | Tab Key | 标签 | 定位 | 渲染函数 |
 |---------|------|------|----------|
 | `overview` | 总览 | 默认首页，聚合看板 | `renderOverview()` |
 | `cohort` | Cohort 曝光矩阵 | 帖子生命周期追踪 | `renderCohort()` |
 | `channel` | 渠道诊断 | 横向对比渠道/平台/漏斗/项目/品线 | `renderChannelDiagnosis()` |
-| `ranking` | 内容排行榜 | Top 帖/优质内容/主题分析 | `renderRanking()` |
-| `detail` | 帖子明细 | 完整可筛选表格 + 导出 CSV | `renderDetail()` |
+| `detail` | 帖子明细 | 完整可筛选表格 + Top 帖/优质内容/主题分析子视图 + 导出 CSV | `renderDetail()` |
 
 默认视图：`state.view = "overview"`。
 
 ### 2.3 全局交互
 
-- **顶部导航栏**：5 个 Tab，`button[data-view]` 点击切换
+- **顶部导航栏**：4 个 Tab，`button[data-view]` 点击切换
 - **指标切换器**：`select#metric-switcher`，可选 曝光量/互动量/互动率/点赞数/评论数/转发数/收藏数
 - **周选择器**：点击 `#week-picker-btn` 展开双月日历，支持点击选择自然周（周一至周日），hover 预览
 - **导入 Excel**：`#import-data-btn` → `#import-file-input`（accept `.xlsx,.csv`）→ 预检弹窗 → 确认导入
@@ -94,15 +93,17 @@ const state = {
 | 变量 | 值 | 用途 |
 |------|-----|------|
 | `--brand` | `#1a3a2e` | 主色（深绿），进度条、标题、强调 |
-| `--brand-light` | `#2d5a48` | 浅主色，边框线 |
+| `--brand-light` | `#e8efe9` | 浅主色，边框线、浅底背景 |
 | `--accent` | `#b85c1a` | 强调色（暖橙），关键数字、集中度摘要 |
-| `--up` | `#22c55e` | 上涨/利好绿色 |
-| `--down` | `#ef4444` | 下跌/风险红色 |
-| `--warn` | `#f59e0b` | 警告/关注橙黄色 |
-| `--muted` | `#6b7280` | 次要文字 |
-| `--line` | `#e5e7eb` | 分割线 |
+| `--accent-light` | `#fdf2e8` | 浅强调色，卡片背景 |
+| `--up` | `#2d7d46` | 上涨/利好绿色 |
+| `--down` | `#c94043` | 下跌/风险红色 |
+| `--warn` | `#d4831a` | 警告/关注橙黄色 |
+| `--muted` | `#8c8c84` | 次要文字 |
+| `--line` | `#e8e4df` | 分割线 |
+| `--line-strong` | `#d4d0c8` | 强分割线 |
 | `--surface` | `#ffffff` | 卡片背景 |
-| `--surface-warm` | `#faf9f7` | 暖色背景（关键发现区） |
+| `--surface-warm` | `#f7f5f1` | 暖色背景（关键发现区） |
 
 **字体**：Google Fonts — DM Sans（正文）、DM Serif Display（标题）、JetBrains Mono（等宽数字）、Noto Sans SC / Noto Serif SC（中文）。
 
@@ -289,28 +290,32 @@ deriveForScope("KOL")    → deriveFromPosts("KOL", filterPostsByScope(posts, "K
 | 本周总曝光 | `all.currentTotals.exposure` | 全部帖子的 diffMetrics 求和 |
 | 本周总互动 | `all.currentTotals.interaction` | 同上 |
 | 本周互动率 | 互动/曝光 | `safeRate(interaction, exposure)` |
-| 贴均曝光 | 曝光/帖子数 | `safeRate(curExp, curPosts)` |
+| 贴均曝光 | 曝光/帖子数 | `safeRate(curExp, Math.max(curPosts, 1))`，curPosts=0 时返回 0 而非除以全量 |
 | 曝光中位数 | 排序取中位 | 全部有曝光帖子的中位数 |
-| Top5 曝光占比 | top5 / 总曝光 | < 30% 显示"头部较分散" |
+| Top5 曝光占比 | top5 / 总曝光 | < 10% 显示"头部较分散" |
 | 优质内容 | `featuredQuality == "1.0"` 的帖子数 | 计数 |
 
 每张卡片带环比箭头（↑ green / ↓ red / → gray），环比阈值 ±10%。
 
 #### (b) 关键发现区（`buildNarrative("overview")`）
 
-程序自动生成的 4-6 条事实陈述，用绿/橙/红圆点标记：
-- 整体趋势判断（向好/下滑/平稳，基于 `wowExp > 0.05 / < -0.05`）
-- 渠道亮点（曝光环比涨幅最大的渠道）
-- 需要关注（曝光环比跌幅最大的渠道）
-- 内容亮点（最高单帖曝光 + 负责人 + 渠道）
-- 数据健康（导入行数/有效行数/跳过行数）
+程序自动生成的 **4 条**事实陈述，用绿/橙/红/灰圆点标记：
+
+| 发现 | 判断逻辑 | 色调 |
+|------|---------|------|
+| 总量变化 | `wowExp > 0.1` = 好，`< -0.1` = 坏，其他 = 关注 | 绿/红/橙 |
+| 贴均与中位 | 比值 > 5x = 高度集中(橙)，3-5x = 较集中(灰)，< 3x = 相对均匀(绿) | 橙/灰/绿 |
+| Top 内容集中度 | Top5占比 > 10% = 集中(橙)，5-10% = 一般(灰)，< 5% = 分散(绿)；同时显示 Top20 占比 | 橙/灰/绿 |
+| 复盘入口 | 优质内容有效 > 0 条 = 好，Top渠道曝光占比 | 绿/橙 |
+
+**阈值设计说明**：大样本（1500+帖）下 Top5 几乎不可能达到 30%。合理阈值：10%/5%。贴均/中位比值在右偏分布下必定 > 1，用 5x/3x 分档取代简单的 >= 判断。
 
 #### (c) 三列速览
 
 | 列 | 内容 |
 |-----|------|
 | 渠道速览 | 社群/社媒/KOL 各一行：指标值 + 帖子数 + Top 来源 |
-| 曝光集中度 | 7 档水平条（10万+ / 5-10万 / 1-5万 / 5千-1万 / 1千-5千 / 100-1千 / <100），条宽 = 曝光占比 |
+| 曝光集中度 | 7 档水平条（10万+ / 5-10万 / 1-5万 / 5千-1万 / 1千-5千 / 100-1千 / <100），条宽 = 曝光占比。底部摘要：10万+与5-10万两档 + 1万以上三档合计 |
 | 内容速览 | Top 3 帖 + 贴均/中位对比表 |
 
 每列底部有 `→ 进入xxx` 快捷跳转链接。
@@ -440,6 +445,8 @@ deriveForScope("KOL")    → deriveFromPosts("KOL", filterPostsByScope(posts, "K
 **数据存储**：`window.__weeklyDetailTables[tableId]` 保存 `{ allRows, filteredRows, postsById }`。
 
 **性能**：首次渲染全部行的 HTML，通过 CSS `display:none` 隐藏第 26 行开始的 tr（`onerror` img hack 实现）。
+
+**站外数据**：`renderOffsiteDetailSection()` 追加在明细表底部，展示站外来源的曝光、来源数量和占比结构。不进入内容原因判断。
 
 ---
 
@@ -600,7 +607,15 @@ deriveForScope("KOL")    → deriveFromPosts("KOL", filterPostsByScope(posts, "K
 
 ---
 
-## 11. 已知限制
+## 11. 已知限制与已知 Bug
+
+### 已知 Bug
+
+| 问题 | 位置 | 严重度 |
+|------|------|--------|
+| `globalMetric` 指标切换器无效 | `state.globalMetric` 被写入但无渲染函数读取，切换指标后页面数据不变 | **低** — UI 存在但不生效 |
+
+### 已知限制
 
 - 纯静态前端，不支持多人同时填写
 - localStorage/IndexedDB 只在当前浏览器有效
@@ -614,12 +629,13 @@ deriveForScope("KOL")    → deriveFromPosts("KOL", filterPostsByScope(posts, "K
 
 ## 12. 后续开发建议（优先级排序）
 
-1. **工作版/发布版切换完善**：发布版隐藏 AI 草稿、待确认项，只保留确认后的口径（`state.publishMode` 已有但未全局生效）
-2. **长期假设池管理 UI**：新增/编辑/暂停假设的能力
-3. **负责人填写导出**：将人工确认内容导出为结构化文件，便于迁移到飞书多维表
-4. **迁移多人协作数据源**：localStorage → 飞书多维表或后端 API
-5. **明细表性能优化**：大数据量下的虚拟滚动或后端分页
-6. **AI 导入结构校验**：更细粒度的 JSON schema 校验，防止字段不匹配
+1. **修复/删除 `globalMetric` 指标切换器**：要么实现全局指标联动（所有 render 函数读取 `state.globalMetric`），要么移除该 select
+2. **工作版/发布版切换完善**：发布版隐藏 AI 草稿、待确认项，只保留确认后的口径（`state.publishMode` 已有但未全局生效）
+3. **长期假设池管理 UI**：新增/编辑/暂停假设的能力
+4. **负责人填写导出**：将人工确认内容导出为结构化文件，便于迁移到飞书多维表
+5. **迁移多人协作数据源**：localStorage → 飞书多维表或后端 API
+6. **明细表性能优化**：大数据量下的虚拟滚动或后端分页
+7. **AI 导入结构校验**：更细粒度的 JSON schema 校验，防止字段不匹配
 
 ---
 
@@ -651,3 +667,18 @@ node --check app.js    # 语法检查
 **一句话总结**：
 
 > 3.0 是品牌内容周复盘看板，不是 AI 自动写结论的报表。程序算事实，人工做判断。5 个 Tab 覆盖从总览到明细的完整分析链路，社群/社媒/KOL 各自按独立口径分析，数据口径贯穿导入→差分→聚合→展示全链路。
+
+---
+
+## 14. 最近关键修复记录
+
+| 日期 | 修复 | 影响 |
+|------|------|------|
+| 2026-06-01 | `curPosts \|\| all.poolPosts.length` → `Math.max(curPosts, 1)`（3处） | 贴均曝光不再误除以全量 |
+| 2026-06-01 | 贴均/中位比值判断从 `>=` 改为 5x/3x 分档 | 不再恒显示"需关注" |
+| 2026-06-01 | Top5 集中度阈值从 30% 改为 10%/5%，新增 Top20 占比 | 大样本下阈值合理 |
+| 2026-06-01 | 集中度底部摘要改为两档+三档两个数字 | 解读更精确 |
+| 2026-06-01 | 中位数标注改为"X 帖（本周有曝光数据）" | 口径更清晰 |
+| 2026-05-29 | 集中度条高度 18px → 28px | 视觉可读性 |
+| 2026-05-29 | 贴均曝光对比表过滤掉"非社群整体"行 | 只显示社媒/KOL |
+| 2026-05-29 | `projectKey` 字段生成补全 | 漏斗/项目面板不再为空 |

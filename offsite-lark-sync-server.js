@@ -48,7 +48,14 @@ function dbConfig() {
     password: process.env.DB_PASSWORD,
     connectTimeout: 12000,
     decimalNumbers: true,
-    dateStrings: true
+    dateStrings: true,
+    typeCast(field, next) {
+      if (["STRING", "VAR_STRING", "BLOB"].includes(field.type)) {
+        const value = field.buffer();
+        return value == null ? null : value.toString("utf8");
+      }
+      return next();
+    }
   };
 }
 
@@ -134,6 +141,18 @@ function metricInteraction(row) {
   return parseNumber(row.likes) + parseNumber(row.comments) + parseNumber(row.shares) + parseNumber(row.saves);
 }
 
+function warehouseTextValue(value) {
+  return value == null ? "" : String(value);
+}
+
+function warehouseContentFormat(contentForm, fallback) {
+  if (contentForm == null || contentForm === "") return fallback || "";
+  const text = String(contentForm);
+  if (text === "0") return "视频";
+  if (text === "1") return "图片";
+  return text;
+}
+
 function upsertPostSnapshot(posts, row) {
   const key = postKey(row.platform, row.post_id, row.post_link);
   if (!posts.has(key)) {
@@ -145,14 +164,14 @@ function upsertPostSnapshot(posts, row) {
       channelType: row.channel_type,
       channelName: row.channel_name,
       owner: row.manager || "",
-      contentFormat: row.content_form || row.content_type || "",
+      contentFormat: warehouseContentFormat(row.content_form, row.content_type),
       contentTopic: row.content_themes || "",
       featuredQuality: row.is_high_quality_content == null ? "" : String(row.is_high_quality_content),
       productLine1: row.first_type || "",
       productLine2: row.second_type || "",
       collabRequirement: row.cooperation_requirements || "",
       funnelStage: row.marketing_funnel_level || "",
-      contentSource: row.content_source || "",
+      contentSource: warehouseTextValue(row.content_source),
       viewers: parseNumber(row.viewers),
       skuCount: parseNumber(row.sku_count),
       publishDate: dateKey(parseDateTime(row.publish_time) || parseDateTime(row.stat_date) || new Date()),
