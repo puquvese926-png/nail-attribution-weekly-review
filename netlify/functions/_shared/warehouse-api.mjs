@@ -1,4 +1,5 @@
 import { getStore } from "@netlify/blobs";
+import mysql from "mysql2/promise";
 import warehouseModule from "../../../offsite-lark-sync-server.js";
 
 const { buildWarehousePosts, dateKey, parseDate, resolveWarehouseFullRange } = warehouseModule;
@@ -52,7 +53,7 @@ export function resolveCacheRange(url) {
 export async function resolveRequestRange(url) {
   const full = url.searchParams.get("full") === "1" || url.searchParams.get("full") === "true";
   if (full) {
-    const range = await resolveWarehouseFullRange({ env: warehouseEnv() });
+    const range = await resolveWarehouseFullRange({ env: warehouseEnv(), mysql });
     return { ...range, full };
   }
   const start = parseDate(url.searchParams.get("start"));
@@ -62,7 +63,7 @@ export async function resolveRequestRange(url) {
 }
 
 export async function buildAndCacheWarehouseSource(range) {
-  const source = await buildWarehousePosts(range.start, range.end, { env: warehouseEnv() });
+  const source = await buildWarehousePosts(range.start, range.end, { env: warehouseEnv(), mysql });
   const key = cacheKeyForRange(range.start, range.end, range.full);
   const savedAt = new Date().toISOString();
   const body = JSON.stringify({ ok: true, source });

@@ -217,7 +217,7 @@ function finalizeWarehousePosts(posts) {
 }
 
 async function resolveWarehouseFullRange(options = {}) {
-  const mysql = loadMysql();
+  const mysql = options.mysql || loadMysql();
   const conn = await mysql.createConnection(dbConfig(options.env));
   try {
     const [rows] = await conn.query(`
@@ -246,7 +246,7 @@ async function resolveWarehouseFullRange(options = {}) {
 }
 
 async function buildWarehousePosts(start, end, options = {}) {
-  const mysql = loadMysql();
+  const mysql = options.mysql || loadMysql();
   const conn = await mysql.createConnection(dbConfig(options.env));
   const params = [dateKey(start), dateKey(end)];
   const sql = `
