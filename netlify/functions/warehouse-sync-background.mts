@@ -1,30 +1,28 @@
-import { buildAndCacheWarehouseSource, resolveRequestRange, writeWarehouseStatus } from "./_shared/warehouse-api.mjs";
+import { buildAndCacheWarehouseSource, resolveCacheRange, resolveRequestRange, writeWarehouseStatus } from "./_shared/warehouse-api.mjs";
 
 export default async (req: Request) => {
   const url = new URL(req.url);
-  let range = null;
+  const statusRange = resolveCacheRange(url);
   try {
-    range = await resolveRequestRange(url);
-    await writeWarehouseStatus(range, {
+    await writeWarehouseStatus(statusRange, {
       ok: true,
       status: "running",
       startedAt: new Date().toISOString()
     });
+    const range = await resolveRequestRange(url);
     const result = await buildAndCacheWarehouseSource(range);
-    await writeWarehouseStatus(range, {
+    await writeWarehouseStatus(statusRange, {
       ok: true,
       status: "done",
       cacheKey: result.cacheKey,
       meta: result.metadata
     });
   } catch (error) {
-    if (range) {
-      await writeWarehouseStatus(range, {
-        ok: false,
-        status: "error",
-        error: error instanceof Error ? error.message : String(error)
-      });
-    }
+    await writeWarehouseStatus(statusRange, {
+      ok: false,
+      status: "error",
+      error: error instanceof Error ? error.message : String(error)
+    });
     throw error;
   }
 };
