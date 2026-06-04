@@ -5,6 +5,7 @@ import warehouseModule from "../../../offsite-lark-sync-server.js";
 const { buildWarehousePosts, dateKey, parseDate, resolveWarehouseFullRange } = warehouseModule;
 
 export const WAREHOUSE_CACHE_STORE = "weekly-dashboard-warehouse";
+export const WAREHOUSE_ENV_KEYS = ["DB_HOST", "DB_PORT", "DB_USER", "DB_PASSWORD"];
 
 export function json(payload, status = 200) {
   return new Response(JSON.stringify(payload), {
@@ -21,12 +22,24 @@ export function getWarehouseStore() {
 }
 
 export function warehouseEnv() {
-  const keys = ["DB_HOST", "DB_PORT", "DB_USER", "DB_PASSWORD"];
   const env = {};
-  keys.forEach(key => {
+  WAREHOUSE_ENV_KEYS.forEach(key => {
     env[key] = globalThis.Netlify?.env?.get(key) || "";
   });
   return env;
+}
+
+export function warehouseEnvStatus() {
+  const env = warehouseEnv();
+  const present = {};
+  WAREHOUSE_ENV_KEYS.forEach(key => {
+    present[key] = Boolean(env[key]);
+  });
+  return {
+    ok: WAREHOUSE_ENV_KEYS.every(key => present[key]),
+    present,
+    missing: WAREHOUSE_ENV_KEYS.filter(key => !present[key])
+  };
 }
 
 export function cacheKeyForRange(start, end, full) {

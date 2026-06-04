@@ -32,11 +32,22 @@
 
 这些变量只在 Netlify Functions 中读取，不会进入前端 JS。
 
+## 健康检查
+
+访问 `/api/posts/warehouse-health?full=1` 可查看：
+
+- `env.present`：四个 DB 环境变量是否已配置，只返回布尔值，不返回明文值。
+- `cache.exists`：Netlify Blobs 中是否已有全量帖子缓存。
+- `sync.status`：最近一次后台同步状态，可能为 `idle` / `running` / `done` / `error`。
+
+当 `ok=true` 时，代表环境变量齐全、已有缓存、最近同步完成。
+
 ## 文件
 
 - `netlify.toml`：Netlify 发布目录与 Functions 目录。
 - `netlify/functions/warehouse-sync-background.mts`：后台同步入口。
 - `netlify/functions/warehouse-status.mts`：同步状态查询。
+- `netlify/functions/warehouse-health.mts`：环境变量、缓存和同步状态健康检查。
 - `netlify/functions/warehouse-cache.mts`：缓存读取，使用流式响应承载全量 JSON。
 - `netlify/functions/warehouse-sync.mts`：同步调试入口，直接查询并写缓存。
 - `netlify/functions/warehouse-refresh-scheduled.mts`：每日定时触发后台同步。Netlify scheduled function 不支持自定义 `/api` path，手动调试用 `/.netlify/functions/warehouse-refresh-scheduled`。
@@ -46,8 +57,10 @@
 ## 验收
 
 1. Netlify 环境变量已配置，远端数仓允许 Netlify 函数访问。
-2. 部署后访问 `/api/posts/warehouse-status?full=1` 返回 `idle` 或最近状态。
-3. 页面点击“同步数仓”后按钮进入后台同步状态。
-4. 同步失败时，`/api/posts/warehouse-status?full=1` 返回 `error`，不会一直停在 `idle`。
-5. 同步完成后出现“数仓同步预检”弹窗。
-6. 确认同步后，帖子明细数据来源显示为数仓数据。
+2. 部署后访问 `/api/posts/warehouse-health?full=1`，确认 `env.ok=true`。
+3. 触发 `/api/posts/warehouse-sync-background?full=1`。
+4. 轮询 `/api/posts/warehouse-status?full=1`，成功时返回 `done`，失败时返回 `error`。
+5. 访问 `/api/posts/warehouse-cache?full=1&meta=1`，确认缓存存在且行数/帖子数合理。
+6. 页面点击“同步数仓”后按钮进入后台同步状态。
+7. 同步完成后出现“数仓同步预检”弹窗。
+8. 确认同步后，帖子明细数据来源显示为数仓数据。
