@@ -15,15 +15,19 @@ export default async (req: Request) => {
       store.get(statusKey, { type: "json" })
     ]);
     const env = warehouseEnvStatus();
+    const cacheExists = Boolean(cacheMeta);
+    const effectiveStatus = cacheExists && status?.status === "error"
+      ? { ...status, usableCache: true }
+      : (status || { status: "idle" });
     return json({
-      ok: Boolean(cacheMeta) && status?.status === "done",
+      ok: cacheExists,
       env,
       cache: {
-        exists: Boolean(cacheMeta),
+        exists: cacheExists,
         key: cacheKey,
         meta: cacheMeta || null
       },
-      sync: status || { status: "idle" }
+      sync: effectiveStatus
     });
   } catch (error) {
     return json({ ok: false, error: error instanceof Error ? error.message : String(error) }, 500);

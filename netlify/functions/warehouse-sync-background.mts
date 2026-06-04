@@ -1,4 +1,4 @@
-import { buildAndCacheWarehouseSource, resolveCacheRange, resolveRequestRange, writeWarehouseStatus } from "./_shared/warehouse-api.mjs";
+import { buildAndCacheWarehouseSource, cacheKeyForRange, getWarehouseStore, resolveCacheRange, resolveRequestRange, writeWarehouseStatus } from "./_shared/warehouse-api.mjs";
 
 export default async (req: Request) => {
   const url = new URL(req.url);
@@ -18,6 +18,18 @@ export default async (req: Request) => {
       meta: result.metadata
     });
   } catch (error) {
+    const cacheKey = cacheKeyForRange(statusRange.start, statusRange.end, statusRange.full);
+    const cacheMeta = await getWarehouseStore().getMetadata(cacheKey);
+    if (cacheMeta) {
+      await writeWarehouseStatus(statusRange, {
+        ok: true,
+        status: "done",
+        cacheKey,
+        meta: cacheMeta.metadata || null,
+        lastRefreshError: error instanceof Error ? error.message : String(error)
+      });
+      throw error;
+    }
     await writeWarehouseStatus(statusRange, {
       ok: false,
       status: "error",

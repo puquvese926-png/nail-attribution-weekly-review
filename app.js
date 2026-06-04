@@ -2507,7 +2507,7 @@ function renderWeekMeta(label,metaText,isImmature,isUp){const cls=["cohort-cell"
   function renderDetailTitleCell(row){
     const link = normalizePostUrl(row.link);
     if (!link) return "-";
-    const label = asText(row.title) || shortDisplayUrl(link);
+    const label = asText(row.title) || "-";
     if (!label) return "-";
     return `<a class="link-cell detail-title-link" href="${escapeHtml(link)}" target="_blank" rel="noopener noreferrer" title="${escapeHtml(label)}">${escapeHtml(label)}</a>`;
   }
@@ -2753,21 +2753,8 @@ function renderWeekMeta(label,metaText,isImmature,isUp){const cls=["cohort-cell"
   }
 
   async function fetchWarehouseSourceFromCloud(signal, button){
-    const syncResponse = await fetch(`/api/posts/warehouse-sync-background?full=1&t=${Date.now()}`, {
-      method: "POST",
-      signal,
-      cache: "no-store"
-    });
-    const syncPayload = await syncResponse.json().catch(() => null);
-    if (!syncResponse.ok) {
-      throw new Error(syncPayload?.error || `云端同步服务返回 ${syncResponse.status}`);
-    }
-    if (button) button.textContent = "后台同步...";
-    showToast("云端后台同步已启动，正在等待数仓缓存更新...");
-    const status = await waitForCloudWarehouseSync(signal, button);
     if (button) button.textContent = "读取缓存...";
-    const range = status.meta?.range ? ` · ${status.meta.range}` : "";
-    showToast(`云端缓存已更新${range}，正在读取数据...`);
+    showToast("正在读取云端数仓缓存；线上同步由本机定时任务更新。");
     const cacheResponse = await fetch(`/api/posts/warehouse-cache?full=1&t=${Date.now()}`, {
       signal,
       cache: "no-store"
@@ -2776,6 +2763,8 @@ function renderWeekMeta(label,metaText,isImmature,isUp){const cls=["cohort-cell"
     if (!cacheResponse.ok || !cachePayload?.ok || !cachePayload.source?.posts) {
       throw new Error(cachePayload?.error || `云端缓存服务返回 ${cacheResponse.status}`);
     }
+    const range = cachePayload.source?.importMeta?.range ? ` · ${cachePayload.source.importMeta.range}` : "";
+    showToast(`云端缓存读取完成${range}`);
     return cachePayload.source;
   }
 
@@ -4369,7 +4358,9 @@ function renderWeekMeta(label,metaText,isImmature,isUp){const cls=["cohort-cell"
     const contentSource = asText(getImportedValue(row, ["内容来源", "来源"])) || null;
     const viewers = asNumber(getImportedValue(row, ["浏览人数", "观看人数", "浏览数"]));
     const skuCount = asNumber(getImportedValue(row, ["SKU数量", "SKU数"]));
-    const title = [project, topic].filter(text => text && text !== "未知").join(" · ") || `${channelName} 内容`;
+    const title = asText(getImportedValue(row, [
+      "标题","帖子标题","内容标题","文案","正文","内容","Post Title","PostTitle","title","text","content_text"
+    ]));
     const owner = ownerRaw || "未知";
     const postKey = link || [channelType, channelName, publishDate, title, rowIndex].map(value => asText(value)).join("__");
     const likes = asNumber(getImportedValue(row, ["点赞数"]));
@@ -5350,4 +5341,5 @@ function renderWeekMeta(label,metaText,isImmature,isUp){const cls=["cohort-cell"
     }[ch]));
   }
 })();
+
 
