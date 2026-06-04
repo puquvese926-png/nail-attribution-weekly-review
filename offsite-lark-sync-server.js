@@ -159,7 +159,7 @@ function upsertPostSnapshot(posts, row) {
     posts.set(key, {
       id: `wh-${key.replace(/[^a-z0-9]+/gi, "-").replace(/^-|-$/g, "")}`,
       link: row.post_link || "",
-      title: row.title || row.content_text || "无标题",
+      title: row.title || row.content_text || "",
       platform: row.platform,
       channelType: row.channel_type,
       channelName: row.channel_name,
