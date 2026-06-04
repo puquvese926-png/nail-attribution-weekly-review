@@ -622,7 +622,7 @@ deriveForScope("KOL")    → deriveFromPosts("KOL", filterPostsByScope(posts, "K
 - 不直接调用 AI API，AI 分析需手动导出提示词 → GPT → 导入 JSON
 - 部分帖子缺少 link，无法打开原帖做内容判断
 - 长期假设池只有内置默认假设，无新增/编辑/暂停 UI
-- 发布到 Netlify 后，本地人工填写内容不会自动同步
+- 发布到 Netlify 后，帖子数仓同步走 Netlify Functions + Blobs；本地人工填写内容仍不会自动同步
 - 大片数据（20000+ 行）明细表首次渲染可能卡顿（当前靠 display:none 做虚拟分页）
 
 ---

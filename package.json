@@ -3,6 +3,7 @@
   "private": true,
   "version": "1.0.0",
   "dependencies": {
+    "@netlify/blobs": "^10.7.9",
     "mysql2": "^3.11.5"
   }
 }

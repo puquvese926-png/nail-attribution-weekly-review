@@ -2692,8 +2692,8 @@ function renderWeekMeta(label,metaText,isImmature,isUp){const cls=["cohort-cell"
   }
 
   async function refreshWarehousePosts(button){
-    const endpoint = "http://127.0.0.1:8787/api/posts/warehouse-refresh";
     const label = button ? button.textContent : "";
+    const useCloudApi = shouldUseCloudWarehouseApi();
     const controller = new AbortController();
     let waitTimer = null;
     let slowTimer = null;
@@ -2702,28 +2702,25 @@ function renderWeekMeta(label,metaText,isImmature,isUp){const cls=["cohort-cell"
       button.disabled = true;
       button.textContent = "同步中...";
     }
-    showToast("正在只读查询数仓全量帖子数据...");
+    showToast(useCloudApi ? "正在触发云端数仓同步..." : "正在只读查询数仓全量帖子数据...");
     try {
-      const url = `${endpoint}?full=1`;
       waitTimer = window.setTimeout(() => {
         if (button) button.textContent = "仍在查询...";
-        showToast("数仓仍在查询中，通常需要 20-60 秒。");
+        showToast(useCloudApi ? "云端数仓同步仍在执行，通常需要 20-60 秒。" : "数仓仍在查询中，通常需要 20-60 秒。");
       }, 5000);
       slowTimer = window.setTimeout(() => {
         if (button) button.textContent = "查询较慢...";
         showToast("数仓查询仍未完成，请保持页面打开；超过 90 秒将自动判定超时。");
       }, 60000);
-      timeoutTimer = window.setTimeout(() => controller.abort(), 90000);
-      const response = await fetch(url, { signal: controller.signal, cache: "no-store" });
-      const payload = await response.json().catch(() => null);
-      if (!response.ok || !payload?.ok || !payload.source?.posts) {
-        throw new Error(payload?.error || `本地同步服务返回 ${response.status}`);
-      }
-      showWarehousePreview(payload.source);
+      timeoutTimer = window.setTimeout(() => controller.abort(), useCloudApi ? 15 * 60 * 1000 : 90000);
+      const nextSource = useCloudApi
+        ? await fetchWarehouseSourceFromCloud(controller.signal, button)
+        : await fetchWarehouseSourceFromLocal(controller.signal);
+      showWarehousePreview(nextSource);
     } catch (error) {
       const message = error && error.name === "AbortError"
-        ? "数仓查询超过 90 秒仍未返回，请稍后重试或检查本地同步服务。"
-        : error && error.name === "TypeError"
+        ? (useCloudApi ? "云端数仓查询超过 90 秒仍未返回，请稍后重试或检查 Netlify 函数日志。" : "数仓查询超过 90 秒仍未返回，请稍后重试或检查本地同步服务。")
+        : error && error.name === "TypeError" && !useCloudApi
           ? "本地同步服务未启动，请先运行 start-dashboard-with-offsite-sync.cmd 打开看板。"
           : (error.message || error);
       showToast(`数仓同步失败：${message}`);
@@ -2737,6 +2734,88 @@ function renderWeekMeta(label,metaText,isImmature,isUp){const cls=["cohort-cell"
         button.textContent = label || "同步数仓";
       }
     }
+  }
+
+  function shouldUseCloudWarehouseApi(){
+    const host = window.location.hostname;
+    if (!host) return false;
+    return !["127.0.0.1", "localhost", "::1"].includes(host);
+  }
+
+  async function fetchWarehouseSourceFromLocal(signal){
+    const endpoint = "http://127.0.0.1:8787/api/posts/warehouse-refresh";
+    const response = await fetch(`${endpoint}?full=1`, { signal, cache: "no-store" });
+    const payload = await response.json().catch(() => null);
+    if (!response.ok || !payload?.ok || !payload.source?.posts) {
+      throw new Error(payload?.error || `本地同步服务返回 ${response.status}`);
+    }
+    return payload.source;
+  }
+
+  async function fetchWarehouseSourceFromCloud(signal, button){
+    const syncResponse = await fetch(`/api/posts/warehouse-sync-background?full=1&t=${Date.now()}`, {
+      method: "POST",
+      signal,
+      cache: "no-store"
+    });
+    const syncPayload = await syncResponse.json().catch(() => null);
+    if (!syncResponse.ok) {
+      throw new Error(syncPayload?.error || `云端同步服务返回 ${syncResponse.status}`);
+    }
+    if (button) button.textContent = "后台同步...";
+    showToast("云端后台同步已启动，正在等待数仓缓存更新...");
+    const status = await waitForCloudWarehouseSync(signal, button);
+    if (button) button.textContent = "读取缓存...";
+    const range = status.meta?.range ? ` · ${status.meta.range}` : "";
+    showToast(`云端缓存已更新${range}，正在读取数据...`);
+    const cacheResponse = await fetch(`/api/posts/warehouse-cache?full=1&t=${Date.now()}`, {
+      signal,
+      cache: "no-store"
+    });
+    const cachePayload = await cacheResponse.json().catch(() => null);
+    if (!cacheResponse.ok || !cachePayload?.ok || !cachePayload.source?.posts) {
+      throw new Error(cachePayload?.error || `云端缓存服务返回 ${cacheResponse.status}`);
+    }
+    return cachePayload.source;
+  }
+
+  async function waitForCloudWarehouseSync(signal, button){
+    const startedAt = Date.now();
+    let lastStatusText = "";
+    while (Date.now() - startedAt < 15 * 60 * 1000) {
+      await sleepWithAbort(5000, signal);
+      const response = await fetch(`/api/posts/warehouse-status?full=1&t=${Date.now()}`, {
+        signal,
+        cache: "no-store"
+      });
+      const payload = await response.json().catch(() => null);
+      if (!response.ok || !payload?.ok) {
+        throw new Error(payload?.error || `云端同步状态返回 ${response.status}`);
+      }
+      if (payload.status === "done") return payload;
+      if (payload.status === "error") throw new Error(payload.error || "云端后台同步失败");
+      const nextText = payload.status === "running" ? "后台同步中..." : "等待同步...";
+      if (button && button.textContent !== nextText) button.textContent = nextText;
+      const elapsed = Math.max(5, Math.round((Date.now() - startedAt) / 1000));
+      const statusText = `云端数仓后台同步中，已等待 ${elapsed} 秒。`;
+      if (statusText !== lastStatusText && elapsed % 15 === 0) {
+        showToast(statusText);
+        lastStatusText = statusText;
+      }
+    }
+    throw new Error("云端后台同步超过 15 分钟仍未完成，请检查 Netlify 函数日志。");
+  }
+
+  function sleepWithAbort(ms, signal){
+    if (signal?.aborted) return Promise.reject(new DOMException("Aborted", "AbortError"));
+    return new Promise((resolve, reject) => {
+      const timer = window.setTimeout(resolve, ms);
+      if (!signal) return;
+      signal.addEventListener("abort", () => {
+        window.clearTimeout(timer);
+        reject(new DOMException("Aborted", "AbortError"));
+      }, { once: true });
+    });
   }
 
   function showWarehousePreview(nextSource){

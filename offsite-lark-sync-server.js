@@ -33,19 +33,19 @@ function loadMysql() {
   try {
     return require("mysql2/promise");
   } catch (error) {
-    throw new Error("本地同步服务缺少 mysql2 依赖，请在 3.0 目录运行 npm install 后重试。");
+    throw new Error("同步服务缺少 mysql2 依赖，请在 3.0 目录运行 npm install 后重试。");
   }
 }
 
-function dbConfig() {
+function dbConfig(env = process.env) {
   const required = ["DB_HOST", "DB_PORT", "DB_USER", "DB_PASSWORD"];
-  const missing = required.filter(key => !process.env[key]);
+  const missing = required.filter(key => !env[key]);
   if (missing.length) throw new Error(`缺少数仓连接配置：${missing.join(", ")}`);
   return {
-    host: process.env.DB_HOST,
-    port: Number(process.env.DB_PORT),
-    user: process.env.DB_USER,
-    password: process.env.DB_PASSWORD,
+    host: env.DB_HOST,
+    port: Number(env.DB_PORT),
+    user: env.DB_USER,
+    password: env.DB_PASSWORD,
     connectTimeout: 12000,
     decimalNumbers: true,
     dateStrings: true,
@@ -216,9 +216,9 @@ function finalizeWarehousePosts(posts) {
   }).filter(post => post.snapshots.length);
 }
 
-async function resolveWarehouseFullRange() {
+async function resolveWarehouseFullRange(options = {}) {
   const mysql = loadMysql();
-  const conn = await mysql.createConnection(dbConfig());
+  const conn = await mysql.createConnection(dbConfig(options.env));
   try {
     const [rows] = await conn.query(`
       select min(dt) min_dt, max(dt) max_dt
@@ -245,9 +245,9 @@ async function resolveWarehouseFullRange() {
   }
 }
 
-async function buildWarehousePosts(start, end) {
+async function buildWarehousePosts(start, end, options = {}) {
   const mysql = loadMysql();
-  const conn = await mysql.createConnection(dbConfig());
+  const conn = await mysql.createConnection(dbConfig(options.env));
   const params = [dateKey(start), dateKey(end)];
   const sql = `
     with metrics as (
@@ -695,7 +695,16 @@ const server = http.createServer(async (req, res) => {
   }
 });
 
-server.listen(PORT, "127.0.0.1", () => {
-  console.log(`Offsite Lark sync server listening at http://127.0.0.1:${PORT}`);
-  console.log("Read-only sheets:", Object.values(SHEETS).map(sheet => `${sheet.title}(${sheet.id})`).join(", "));
-});
+if (require.main === module) {
+  server.listen(PORT, "127.0.0.1", () => {
+    console.log(`Offsite Lark sync server listening at http://127.0.0.1:${PORT}`);
+    console.log("Read-only sheets:", Object.values(SHEETS).map(sheet => `${sheet.title}(${sheet.id})`).join(", "));
+  });
+}
+
+module.exports = {
+  buildWarehousePosts,
+  dateKey,
+  parseDate,
+  resolveWarehouseFullRange
+};
