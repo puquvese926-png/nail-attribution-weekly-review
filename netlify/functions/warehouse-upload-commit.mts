@@ -97,10 +97,12 @@ function mergeWarehouseSources(base, delta) {
     audit: {
       ...(base.audit || {}),
       ...(delta.audit || {}),
+      totalRows: Math.max(Number(base.audit?.totalRows || 0), Number(delta.audit?.totalRows || 0)),
       acceptedRows: mergedPosts.length,
       source: "warehouse-local-upload",
       mergeMode: "incremental",
-      lastDeltaRange: deltaRange
+      lastDeltaRange: deltaRange,
+      lastDeltaRows: Number(delta.audit?.totalRows || 0)
     },
     importMeta: {
       ...(base.importMeta || {}),
