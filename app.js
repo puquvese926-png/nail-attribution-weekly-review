@@ -44,6 +44,8 @@
     sourceLabel: "内置数据",
     importMeta: null,
     importAudit: null,
+    cohortMetricMode: "delta",
+    channelFocusPanel: "",
     publishMode: false,
     filterCache: null
   };
@@ -96,10 +98,11 @@
       if (!nextSource?.posts?.length) return;
       const prepared = {
         ...nextSource,
-        dtcSection: source.dtcSection
+        dtcSection: nextSource.dtcSection || source.dtcSection
       };
       const audit = buildWarehousePreviewAudit(prepared);
       source = mergeImportedSource(prepared);
+      applyImportedOffsiteSection(prepared.dtcSection);
       state.sourceLabel = "数仓数据";
       state.importMeta = prepared.importMeta || { fileName: "云端数仓缓存", savedAt: formatDate(new Date()) };
       state.importAudit = audit || prepared.audit || null;
@@ -515,6 +518,28 @@
         dom.detailPanel.hidden = true;
         dom.detailPanel.innerHTML = "";
       }
+      return;
+    }
+
+    if (action === "cohort-metric-mode") {
+      const btn = event.target.closest("[data-cohort-mode]");
+      const mode = btn?.dataset.cohortMode;
+      if (!["delta", "total"].includes(mode)) return;
+      state.cohortMetricMode = mode;
+      render();
+      return;
+    }
+
+    if (action === "channel-focus-panel") {
+      const btn = event.target.closest("[data-channel-focus]");
+      state.channelFocusPanel = btn?.dataset.channelFocus || "";
+      render();
+      return;
+    }
+
+    if (action === "channel-focus-clear") {
+      state.channelFocusPanel = "";
+      render();
       return;
     }
 
@@ -1757,18 +1782,20 @@ function buildMetricCards(tabKey){
   const curExp = all.currentTotals.exposure || 0, curInt = all.currentTotals.interaction || 0;
   const prevExp = (all.previousTotals || all.currentTotals).exposure || 0, prevInt = (all.previousTotals || all.currentTotals).interaction || 0;
   const wowExp = safeWoW(curExp, prevExp), wowInt = safeWoW(curInt, prevInt);
-  const card = (label, value, foot) => `<div class="metric-card"><strong>${typeof value === "number" ? formatCompact(value) : escapeHtml(String(value))}</strong><p>${escapeHtml(label)}${foot ? " · " + foot : ""}</p></div>`;
+  const metricValueText = (value) => typeof value === "number" ? formatCompact(value) : escapeHtml(String(value));
+  const card = (label, value, foot) => `<div class="metric-card"><div class="metric-card-title">${escapeHtml(label)}</div><strong>${metricValueText(value)}</strong>${foot ? `<p>${escapeHtml(foot)}</p>` : ""}</div>`;
   const arrow = (wow) => wow > 0.1 ? " ↑" : wow < -0.1 ? " ↓" : " →";
   const wowFoot = (wow) => `<span style="color:${wowColor(wow)}">${arrow(wow)} ${formatPct(Math.abs(wow))}</span>`;
   const cardClass = (wow) => wow > 0.1 ? "is-up" : wow < -0.1 ? "is-down" : "is-flat";
-  const cardWow = (label, value, wow, foot) => `<div class="metric-card ${cardClass(wow)}"><strong>${typeof value === "number" ? formatCompact(value) : escapeHtml(String(value))}<span style="font-size:13px;">${wowFoot(wow)}</span></strong><p>${escapeHtml(label)}${foot ? " · " + foot : ""}</p></div>`;
+  const cardWow = (label, value, wow, foot, currentValue = value, previousValue = 0) => `<div class="metric-card ${cardClass(wow)}"><div class="metric-card-title">${escapeHtml(label)}</div><strong>${metricValueText(value)}<span style="font-size:13px;">${wowFoot(wow)}</span></strong><div class="metric-card-compare">本周 ${metricValueText(currentValue)} / 上周 ${metricValueText(previousValue)}</div>${foot ? `<p>${escapeHtml(foot)}</p>` : ""}</div>`;
   const metricRangeLabel = `${formatDate(reviewWindow.start).replace(/-/g,".").slice(5)}—${formatDate(reviewWindow.end).replace(/-/g,".").slice(5)}`;
   const metricBatchStart = parseDate(state.batchStartDate) || reviewWindow.start;
   const metricBatchEnd = parseDate(state.batchEndDate) || reviewWindow.end;
   const metricBatchLabel = `${formatDate(metricBatchStart).replace(/-/g,".").slice(5)}—${formatDate(metricBatchEnd).replace(/-/g,".").slice(5)}`;
-  const publishFoot = `发布时间 ${metricRangeLabel}`;
-  const totalFoot = `批次 ${metricBatchLabel} · ${metricRangeLabel}新增`;
-  const addedFoot = `${metricRangeLabel}新增`;
+  const publishFoot = "按发布时间";
+  const totalFoot = "全量帖子新增表现";
+  const addedFoot = "复盘周期新增";
+  const qualityFoot = "导入字段标记";
 
   if (tabKey === "overview") {
     const weekPosts = posts.filter(p => p.publishDateObj && p.publishDateObj >= reviewWindow.start && p.publishDateObj <= reviewWindow.end);
@@ -1789,7 +1816,7 @@ function buildMetricCards(tabKey){
     const top5 = [...currentMetricRows].sort((a, b) => b.metrics.exposure - a.metrics.exposure).slice(0, 5);
     const top5Share = safeRate(sum(top5, row => row.metrics.exposure), curExp);
     const quality = all.poolPosts.filter(post => (asText(post.featuredQuality) === "1.0" || asText(post.featuredQuality) === "1")).length;
-    return `<div class="metric-grid-2row">${cardWow("复盘周期发布帖", curPosts, wowPosts, publishFoot)}${cardWow("本周总曝光", curExp, wowExp, totalFoot)}${cardWow("本周总互动", curInt, wowInt, totalFoot)}${cardWow("本周互动率", formatPct(curRate), wowRate, totalFoot)}${card("贴均曝光", formatCompact(avgExp), `${addedFoot} · 较前期 ${formatDelta(safeWoW(avgExp, prevAvgExp))}`)}${card("曝光中位数", formatCompact(medianExp), `${addedFoot} · ${formatInteger(exposureValues.length)}帖`)}${card("Top5占比", formatPct(top5Share), `${addedFoot} · 按曝光排序`)}${card("批次优质内容", quality, `批次 ${metricBatchLabel} · 导入字段标记`)}</div>`;
+    return `<div class="metric-grid-2row">${cardWow("复盘周期发布帖", curPosts, wowPosts, publishFoot, curPosts, prevPosts)}${cardWow("本周总曝光", curExp, wowExp, totalFoot, curExp, prevExp)}${cardWow("本周总互动", curInt, wowInt, totalFoot, curInt, prevInt)}${cardWow("本周互动率", formatPct(curRate), wowRate, totalFoot, formatPct(curRate), formatPct(prevRate))}${card("贴均曝光", formatCompact(avgExp), `较前期 ${formatDelta(safeWoW(avgExp, prevAvgExp))}`)}${card("曝光中位数", formatCompact(medianExp), `${addedFoot} · ${formatInteger(exposureValues.length)}帖`)}${card("Top5占比", formatPct(top5Share), "按曝光排序")}${card("批次优质内容", quality, qualityFoot)}</div>`;
   }
 
   if (tabKey === "cohort") {
@@ -1799,7 +1826,7 @@ function buildMetricCards(tabKey){
     const prevPosts = prevWeekPosts.length;
     const wowPosts = safeWoW(curPosts, prevPosts);
     const curRate = safeRate(curInt, curExp), prevRate = safeRate(prevInt, prevExp), wowRate = safeWoW(curRate, prevRate);
-    return `<div class="metric-grid">${cardWow("复盘周期发布帖", curPosts, wowPosts, publishFoot)}${cardWow("本周总曝光", curExp, wowExp, totalFoot)}${cardWow("本周总互动", curInt, wowInt, totalFoot)}${cardWow("本周互动率", formatPct(curRate), wowRate, totalFoot)}</div>`;
+    return `<div class="metric-grid">${cardWow("复盘周期发布帖", curPosts, wowPosts, publishFoot, curPosts, prevPosts)}${cardWow("本周总曝光", curExp, wowExp, totalFoot, curExp, prevExp)}${cardWow("本周总互动", curInt, wowInt, totalFoot, curInt, prevInt)}${cardWow("本周互动率", formatPct(curRate), wowRate, totalFoot, formatPct(curRate), formatPct(prevRate))}</div>`;
   }
 
   if (tabKey === "channel") {
@@ -1827,10 +1854,19 @@ function buildMetricCards(tabKey){
     const top5 = detailPosts.map(p => ({ m: diffMetrics(p, reviewWindow.start, reviewWindow.end) })).sort((a, b) => b.m.exposure - a.m.exposure).slice(0, 5);
     const top5Share = safeRate(sum(top5, p => p.m.exposure), detailExp);
     const quality = detailPosts.filter(p => (asText(p.featuredQuality) === "1.0" || asText(p.featuredQuality) === "1")).length;
-    return `<div class="metric-grid">${cardWow("复盘周期发布帖", curPosts, wowPosts, publishFoot)}${card("Top5曝光占比", formatPct(top5Share), `${addedFoot} · 按曝光排序`)}${card("全量优质内容", quality, `全量帖子 · 导入字段标记`)}${cardWow("本周总曝光", detailExp, detailWowExp, `全量帖子 · ${metricRangeLabel}新增`)}</div>`;
+    return `<div class="metric-grid">${cardWow("复盘周期发布帖", curPosts, wowPosts, publishFoot, curPosts, prevWeekPosts.length)}${card("Top5曝光占比", formatPct(top5Share), "按曝光排序")}${card("全量优质内容", quality, qualityFoot)}${cardWow("本周总曝光", detailExp, detailWowExp, totalFoot, detailExp, detailPrevExp)}</div>`;
   }
   return "";
   } catch(e) { console.error("buildMetricCards error", e); return ""; }
+}
+
+function renderFindingsPanel(title, findings){
+  const items = (findings || []).filter(item => item && (item.title || item.body));
+  if (!items.length) return "";
+  return `<section class="findings-panel">
+      <div class="findings-title">${escapeHtml(title || "本周关键发现")}</div>
+      ${items.map(item => `<div class="findings-item ${item.tone || "is-neutral"}"><span class="findings-bullet"></span><span><strong>${escapeHtml(item.title || "事实")}：</strong>${escapeHtml(item.body || "")}</span></div>`).join("")}
+    </section>`;
 }
 
 function buildNarrative(tabKey){
@@ -1880,10 +1916,7 @@ function buildNarrative(tabKey){
         body: `批次优质内容 ${formatInteger(quality)} 条；${topChannel ? `按复盘周期新增曝光看，渠道最高为 ${topChannel.label}，占比 ${formatPct(safeRate(topChannel.exposure, curExp))}。` : "渠道曝光暂缺。"}`
       }
     ];
-    return `<section class="findings-panel">
-      <div class="findings-title">本周关键发现</div>
-      ${findings.map(item => `<div class="findings-item ${item.tone}"><span class="findings-bullet"></span><span><strong>${escapeHtml(item.title)}：</strong>${escapeHtml(item.body)}</span></div>`).join("")}
-    </section>`;
+    return renderFindingsPanel("本周关键发现", findings);
   }
 
   if (tabKey === "cohort") {
@@ -1946,10 +1979,11 @@ function buildNarrative(tabKey){
   }
 
   if (!lines.length) return "";
-  return `<section class="panel" style="border-left:3px solid var(--blue);">
-    <div class="panel-head"><div class="panel-title"><h3>本周综述</h3><p>程序自动生成的事实汇总，不解释原因。</p></div></div>
-    <div style="font-size:13px;line-height:1.8;color:var(--ink);">${lines.map((l, i) => `<p style="margin:2px 0;">${i + 1}. ${l}</p>`).join("")}</div>
-  </section>`;
+  return renderFindingsPanel("本周关键发现", lines.map((body, index) => ({
+    tone: index === 0 ? (wowExp > 0.1 ? "is-good" : wowExp < -0.1 ? "is-bad" : "is-neutral") : "is-neutral",
+    title: ["总量变化", "重点入口", "结构提示", "数据边界", "补充观察"][index] || `事实${index + 1}`,
+    body
+  })));
 }
 
 function renderWeekMeta(label,metaText,isImmature,isUp){const cls=["cohort-cell"];if(isImmature)cls.push("is-immature");if(isUp)cls.push("is-up");return `<div class="${cls.join(" ")}"><div class="cohort-cell-value">${escapeHtml(label)}</div><div class="cohort-cell-maturity">${escapeHtml(metaText)}</div></div>`;}
@@ -2173,9 +2207,10 @@ function renderWeekMeta(label,metaText,isImmature,isUp){const cls=["cohort-cell"
     const heatmapData = buildChannelHeatmap(all.poolPosts.filter(p => p.normalizedChannelType !== "社群"));
     const heatmapMax = Math.max(1, ...heatmapData.flatMap(group => (group.cells || []).map(cell => asNumber(cell.value))));
     const funnelRows = deriveFunnelDistribution(all.poolPosts.filter(post => post.normalizedChannelType !== "社群"));
-    const projectRows = deriveProjectRows(all.poolPosts).slice(0, 6);
+    const projectRows = deriveProjectRows(all.poolPosts).slice(0, 12);
     const productLineRows = deriveProductLineRows(all.poolPosts);
     const avgInteractionRate = safeRate(all.currentTotals.interaction, all.currentTotals.exposure);
+    const activeFocus = asText(state.channelFocusPanel);
     const commMap = new Map();
     community.poolPosts.forEach(post => {
       const name = post.displayChannelName || post.channelName || "未知群";
@@ -2204,50 +2239,36 @@ function renderWeekMeta(label,metaText,isImmature,isUp){const cls=["cohort-cell"
       const tone = row.baseline ? "is-neutral" : delta > 0.05 ? "is-above" : delta < -0.05 ? "is-below" : "is-neutral";
       const relative = row.baseline ? "基准" : baselineAvgExposure ? formatDelta(delta) : "-";
       const topSource = row.derived.channelRows[0]?.label || "暂无";
-      return `<tr>
-        <td class="label">${escapeHtml(row.label)}</td>
-        <td>${formatInteger(postCount)}</td>
-        <td>${formatCompact(row.derived.currentTotals.exposure)}</td>
-        <td class="${tone}">${formatCompact(avgExposure)}</td>
-        <td class="${tone}">${escapeHtml(relative)}</td>
-        <td>${escapeHtml(topSource)}</td>
-      </tr>`;
+      return `<tr><td class="label">${escapeHtml(row.label)}</td><td>${formatInteger(postCount)}</td><td>${formatCompact(row.derived.currentTotals.exposure)}</td><td class="${tone}">${formatCompact(avgExposure)}</td><td class="${tone}">${escapeHtml(relative)}</td><td>${escapeHtml(topSource)}</td></tr>`;
     }).join("");
-    const perPostExposureTable = `<section class="panel">
-      <div class="panel-head"><div class="panel-title"><h3>贴均曝光对比</h3><p>${formatDate(reviewWindow.start)} ~ ${formatDate(reviewWindow.end)} · 按有表现帖子数计算。</p></div></div>
-      <div class="table-wrap"><table class="per-post-table">
-        <thead><tr><th>范围</th><th>有表现帖</th><th>总曝光</th><th>贴均曝光</th><th>相对整体</th><th>Top来源</th></tr></thead>
-        <tbody>${perPostBody}</tbody>
-      </table></div>
-    </section>`;
-    return `${buildMetricCards("channel")}${buildNarrative("channel")}<section class="panel"><div class="panel-head"><div class="panel-title"><h3>渠道热力图</h3><p>${formatDate(reviewWindow.start)} ~ ${formatDate(reviewWindow.end)}。</p></div><div style="display:flex;gap:4px;"><button class="chip-button is-active" type="button" data-action="heatmap-toggle" data-heatmap-toggle="social-kol">社媒+KOL</button><button class="chip-button" type="button" data-action="heatmap-toggle" data-heatmap-toggle="community">社群</button></div></div><div data-heatmap-content="social-kol">${renderHeatmap(heatmapData, heatmapMax)}</div><div data-heatmap-content="community" hidden><p style="font-size:12px;color:var(--muted);margin-bottom:8px;">社群仅统计互动，无曝光口径。</p>${communityHeatHtml}</div></section>
-    ${perPostExposureTable}
-    <div class="color-legend" style="display:flex;gap:20px;align-items:center;font-size:12px;color:var(--muted);margin-bottom:16px;padding:10px 16px;background:var(--surface-warm);border-radius:var(--radius-sm);flex-wrap:wrap;">
-      <span style="font-weight:600;color:var(--ink);">图例</span>
-      <span><span style="display:inline-block;width:12px;height:12px;border-radius:3px;background:var(--brand);margin-right:4px;vertical-align:middle;"></span> 进度条 = 曝光量占比</span>
-      <span><span style="display:inline-block;width:12px;height:12px;border-radius:999px;background:var(--up);margin-right:4px;vertical-align:middle;"></span> 绿色 = 高于均值 / 上涨</span>
-      <span><span style="display:inline-block;width:12px;height:12px;border-radius:999px;background:var(--down);margin-right:4px;vertical-align:middle;"></span> 红色 = 低于均值 / 下跌</span>
-      <span><span style="display:inline-block;width:12px;height:12px;border-radius:999px;background:var(--warn);margin-right:4px;vertical-align:middle;"></span> 橙黄 = 接近均值</span>
-    </div>
-    <div class="three-col-grid">
-      <section class="panel"><div class="panel-head"><div class="panel-title"><h3>漏斗分布</h3></div></div><p style="font-size:12px;color:var(--muted);margin-bottom:10px;">仅统计非社群帖子，观察各漏斗层级曝光分布和互动效率差异。</p>${(() => {
+    const perPostExposureTable = `<section class="panel"><div class="panel-head"><div class="panel-title"><h3>贴均曝光对比</h3><p>${formatDate(reviewWindow.start)} ~ ${formatDate(reviewWindow.end)} · 按有表现帖子数计算。</p></div></div><div class="table-wrap"><table class="per-post-table"><thead><tr><th>范围</th><th>有表现帖</th><th>总曝光</th><th>贴均曝光</th><th>相对整体</th><th>Top来源</th></tr></thead><tbody>${perPostBody}</tbody></table></div></section>`;
+    const focusActions = key => activeFocus === key
+      ? `<button class="icon-button" title="退出放大" type="button" data-action="channel-focus-panel" data-channel-focus="">↙</button>`
+      : `<button class="icon-button" title="放大查看" type="button" data-action="channel-focus-panel" data-channel-focus="${escapeHtml(key)}">↗</button>`;
+    const focusClass = key => `panel channel-focus-card ${activeFocus === key ? "is-focused" : ""}`;
+    const heatmapPanel = `<section class="${focusClass("heatmap")}" data-channel-panel="heatmap"><div class="panel-head"><div class="panel-title"><h3>渠道热力图</h3><p>${formatDate(reviewWindow.start)} ~ ${formatDate(reviewWindow.end)}。</p></div><div class="panel-actions">${focusActions("heatmap")}<button class="chip-button is-active" type="button" data-action="heatmap-toggle" data-heatmap-toggle="social-kol">社媒+KOL</button><button class="chip-button" type="button" data-action="heatmap-toggle" data-heatmap-toggle="community">社群</button></div></div><div data-heatmap-content="social-kol">${renderHeatmap(heatmapData, heatmapMax)}</div><div data-heatmap-content="community" hidden><p style="font-size:12px;color:var(--muted);margin-bottom:8px;">社群仅统计互动，无曝光口径。</p>${communityHeatHtml}</div></section>`;
+    const funnelPanel = `<section class="${focusClass("funnel")}" data-channel-panel="funnel"><div class="panel-head"><div class="panel-title"><h3>漏斗分布</h3><p>仅统计非社群帖子，观察各漏斗层级曝光分布和互动效率差异。</p></div><div class="panel-actions">${focusActions("funnel")}</div></div>${(() => {
       if (!funnelRows.length) return renderEmpty("暂无漏斗数据。");
       const maxExp = Math.max(1, ...funnelRows.map(r => asNumber(r.exposure)));
       return funnelRows.map((r, i) => {
         const w = Math.max(4, asNumber(r.exposure) / maxExp * 100);
-        return `<div style="padding:8px 0;border-bottom:1px solid var(--line);"><div style="display:flex;justify-content:space-between;align-items:center;font-size:12px;"><strong>${i + 1}. ${escapeHtml(r.label)}</strong><span style="font-size:11px;color:var(--muted);">${formatInteger(r.posts)}帖</span></div><div style="margin-top:6px;display:grid;grid-template-columns:1fr auto;gap:8px;"><div style="height:8px;border-radius:999px;background:var(--line);overflow:hidden;"><span style="display:block;height:100%;width:${w.toFixed(1)}%;background:var(--brand);"></span></div><div style="font-size:11px;color:var(--muted);">${formatCompact(r.exposure)}</div></div><div style="margin-top:4px;font-size:11px;color:var(--muted);">互动率 ${formatPct(r.interactionRate)} · 占比 ${formatPct(r.exposureShare)}</div></div>`;
+        return `<div class="rank-bar-row"><div class="rank-bar-head"><strong>${i + 1}. ${escapeHtml(r.label)}</strong><span>${formatInteger(r.posts)}帖</span></div><div class="rank-bar-main"><div class="bar-track"><span class="bar-fill" style="width:${w.toFixed(1)}%;background:var(--brand);"></span></div><div>${formatCompact(r.exposure)}</div></div><div class="rank-bar-note">互动率 ${formatPct(r.interactionRate)} · 占比 ${formatPct(r.exposureShare)}</div></div>`;
       }).join("");
-    })()}</section>
-      <section class="panel"><div class="panel-head"><div class="panel-title"><h3>项目对比</h3></div></div><p style="font-size:12px;color:var(--muted);margin-bottom:10px;">按项目聚合曝光和互动，关注不同项目的结构差异。</p>${(() => {
+    })()}</section>`;
+    const projectPanel = `<section class="${focusClass("project")}" data-channel-panel="project"><div class="panel-head"><div class="panel-title"><h3>项目对比</h3><p>按项目聚合曝光和互动，关注不同项目的结构差异。</p></div><div class="panel-actions">${focusActions("project")}</div></div>${(() => {
       if (!projectRows.length) return renderEmpty("暂无项目数据。");
       const maxExp = Math.max(1, ...projectRows.map(r => asNumber(r.exposure)));
       return projectRows.map((r, i) => {
         const w = Math.max(4, asNumber(r.exposure) / maxExp * 100);
-        return `<div style="padding:8px 0;border-bottom:1px solid var(--line);"><div style="display:flex;justify-content:space-between;align-items:center;font-size:12px;"><strong>${i + 1}. ${escapeHtml(r.label)}</strong><span style="font-size:11px;color:var(--muted);">${formatInteger(r.posts)}帖</span></div><div style="margin-top:6px;display:grid;grid-template-columns:1fr auto;gap:8px;"><div style="height:8px;border-radius:999px;background:var(--line);overflow:hidden;"><span style="display:block;height:100%;width:${w.toFixed(1)}%;background:var(--brand);"></span></div><div style="font-size:11px;color:var(--muted);">${formatCompact(r.exposure)}</div></div><div style="margin-top:4px;font-size:11px;color:var(--muted);">互动 ${formatCompact(r.interaction)} · 互动率 ${formatPct(r.interactionRate)}</div></div>`;
+        return `<div class="rank-bar-row"><div class="rank-bar-head"><strong>${i + 1}. ${escapeHtml(r.label)}</strong><span>${formatInteger(r.posts)}帖</span></div><div class="rank-bar-main"><div class="bar-track"><span class="bar-fill" style="width:${w.toFixed(1)}%;background:var(--brand);"></span></div><div>${formatCompact(r.exposure)}</div></div><div class="rank-bar-note">互动 ${formatCompact(r.interaction)} · 互动率 ${formatPct(r.interactionRate)}</div></div>`;
       }).join("");
-    })()}</section>
-      <section class="panel"><div class="panel-head"><div class="panel-title"><h3>品线排行</h3></div></div><p style="font-size:12px;color:var(--muted);margin-bottom:10px;">品线按曝光排序，互动率红色&lt;2%、黄色2-3%、绿色&gt;3%，最后一列为与全样本均值的定性对比。</p>${renderProductLineRanking(productLineRows.slice(0, 5), avgInteractionRate)}</section>
-    </div>`;
+    })()}</section>`;
+    const productLinePanel = `<section class="panel"><div class="panel-head"><div class="panel-title"><h3>品线排行</h3><p>品线按曝光排序，互动率红色&lt;2%、黄色2-3%、绿色&gt;3%。</p></div></div>${renderProductLineRanking(productLineRows.slice(0, 5), avgInteractionRate)}</section>`;
+    const legend = `<div class="color-legend"><span style="font-weight:600;color:var(--ink);">图例</span><span><span class="legend-square is-brand"></span>进度条 = 曝光量占比</span><span><span class="legend-square is-up"></span>绿色 = 高于均值 / 上涨</span><span><span class="legend-square is-down"></span>红色 = 低于均值 / 下跌</span><span><span class="legend-square is-warn"></span>橙黄 = 接近均值</span></div>`;
+    if (activeFocus === "heatmap") return `${buildMetricCards("channel")}${buildNarrative("channel")}<div class="channel-focus-area">${heatmapPanel}</div>`;
+    if (activeFocus === "funnel") return `${buildMetricCards("channel")}${buildNarrative("channel")}<div class="channel-focus-area">${funnelPanel}</div>`;
+    if (activeFocus === "project") return `${buildMetricCards("channel")}${buildNarrative("channel")}<div class="channel-focus-area">${projectPanel}</div>`;
+    return `${buildMetricCards("channel")}${buildNarrative("channel")}${heatmapPanel}${perPostExposureTable}${legend}<div class="three-col-grid">${funnelPanel}${projectPanel}${productLinePanel}</div>`;
   }
   function deriveTopPostsRankingRows(poolPosts, channelFilter = "全部渠道"){
     const normalizedFilter = asText(channelFilter) || "全部渠道";
@@ -2839,7 +2860,7 @@ function renderWeekMeta(label,metaText,isImmature,isUp){const cls=["cohort-cell"
   function showWarehousePreview(nextSource){
     const prepared = {
       ...nextSource,
-      dtcSection: source.dtcSection
+      dtcSection: nextSource.dtcSection || source.dtcSection
     };
     const audit = buildWarehousePreviewAudit(prepared);
     const canConfirm = (prepared.posts || []).length > 0;
@@ -2904,6 +2925,7 @@ function renderWeekMeta(label,metaText,isImmature,isUp){const cls=["cohort-cell"
 
   async function applyWarehouseSource(nextSource, audit){
     source = mergeImportedSource(nextSource);
+    applyImportedOffsiteSection(nextSource.dtcSection);
     state.sourceLabel = "数仓数据";
     state.importMeta = nextSource.importMeta || { fileName: "数仓只读同步", savedAt: formatDate(new Date()) };
     state.importAudit = audit || nextSource.audit || null;
@@ -2962,6 +2984,20 @@ function renderWeekMeta(label,metaText,isImmature,isUp){const cls=["cohort-cell"
     };
     cache.lastRange = { start: state.offsiteStartDate, end: state.offsiteEndDate };
     saveOffsiteCache(cache);
+  }
+
+  function applyImportedOffsiteSection(dtcSection){
+    if (!dtcSection) return;
+    const range = dtcSection.cacheRange || null;
+    if (range && parseDate(range.start) && parseDate(range.end)) {
+      state.offsiteStartDate = range.start;
+      state.offsiteEndDate = range.end;
+    }
+    source = {
+      ...source,
+      dtcSection: cloneData(dtcSection)
+    };
+    saveOffsiteCacheForCurrentRange(dtcSection);
   }
 
   function applyCachedOffsiteForCurrentRange(){
@@ -3134,53 +3170,134 @@ function renderWeekMeta(label,metaText,isImmature,isUp){const cls=["cohort-cell"
       </div>
     </section>${renderOffsiteDetailSection()}`;
   }
-  function normalizeCohortMatrix(rows){return (rows||[]).map(row=>({key:row.cohortWeek||row.key,publishWeekStart:row.publishWeekStart,publishWeekEnd:row.publishWeekEnd,postCount:row.postCount||0,matureWeeks:row.matureWeeks||0,maturity:row.matureWeeks>=4,cumulativeExposure:row.totalExposure||0,interactionRate:row.interactionRate||0,maturityText:`成熟 ${formatInteger(row.matureWeeks||0)}/4 周`,weeks:(row.windows||[]).map(w=>({exposure:w.exposure||0,interaction:w.interaction||0,maturityText:w.mature?"成熟":"未成熟",isImmature:!w.mature}))}));}
-
-  function renderCohort(){const all=deriveForScope("all"),poolPosts=all.poolPosts,allPosts=preprocessPosts(source.posts||[]),reviewStart=reviewWindow.start,reviewEnd=reviewWindow.end;const breakdown=buildWeekBreakdown(poolPosts,reviewStart,reviewEnd);const cohortPosts=allPosts.filter(post=>post&&post.publishDateObj&&post.publishDateObj<=reviewEnd);const matrix=normalizeCohortMatrix(buildCohortMatrix(cohortPosts,reviewEnd));const reviewWeekKey = reviewWindow.start.getFullYear() + '-W' + String(weekOfYear(reviewWindow.start)).padStart(2, '0');const previousReviewWeek=naturalWeekRange(addDays(reviewWindow.start,-7));const previousReviewWeekKey=previousReviewWeek.start.getFullYear()+'-W'+String(weekOfYear(previousReviewWeek.start)).padStart(2,'0');const currentWeekRow = matrix.find(function(row) { return row.key === reviewWeekKey; });const breakdownRows=breakdown.rows||[];const maxBreakdownExposure=Math.max(0,...breakdownRows.map(row=>row.exposure||0));const yMax=maxBreakdownExposure>0?maxBreakdownExposure:1;const yTicks=[1,0.75,0.5,0.25,0].map(tick=>`<span>${formatCompact(yMax*tick)}</span>`).join("");const breakdownBars=breakdownRows.map(row=>{const pct=Math.max(2,Math.round((row.exposureShare||0)*100));const isCurrentWeek=row.key===reviewWeekKey;const isLastWeek=row.key===previousReviewWeekKey;const barCls=["week-breakdown-bar"];if(isCurrentWeek)barCls.push("is-current");if(isLastWeek)barCls.push("is-last");const heightPct=Math.max(8,safeRate(row.exposure||0,yMax)*100);return `<div class="week-breakdown-item"><div class="week-breakdown-meta">${formatCompact(row.exposure||0)}</div><div class="week-breakdown-meta">${formatPct(row.exposureShare||0)}</div><div class="${barCls.join(" ")}" style="height:${heightPct.toFixed(1)}%;" onmouseenter="this.style.opacity='0.8'" onmouseleave="this.style.opacity='1'"></div></div>`;}).join("");const breakdownLabels=breakdownRows.map(row=>`<div class="week-breakdown-label">${escapeHtml(row.key||"更早")}</div>`).join("");const breakdownHtml=breakdownRows.length?`<div class="week-breakdown-chart"><div class="week-breakdown-y-axis">${yTicks}</div><div class="week-breakdown-plot">${breakdownBars}</div><div class="week-breakdown-x-axis">${breakdownLabels}</div></div>`:"";const topBreakdownWeek=breakdownRows.reduce((best,row)=>(row.exposure||0)>(best?.exposure||0)?row:best,null);const matrixRows=matrix.map((row,ri)=>{const weekCells=row.weeks.map((w,wi)=>{if(!(w.exposure>0||w.interaction>0))return `<td class="cohort-cell is-empty">-</td>`;const prev=ri>0?matrix[ri-1]?.weeks?.[wi]:null;const upArrow=!!(prev&&w.exposure>(prev.exposure||0)*1.3);return `<td>${renderWeekMeta(formatCompact(w.exposure),w.maturityText,w.isImmature,upArrow)}</td>`;}).join("");return `<tr class="cohort-row ${row.key===reviewWeekKey?"is-current-week":""}" data-publish-week="${escapeHtml(row.key)}"><td style="cursor:pointer;" data-action="expand-publish-week" data-week-key="${escapeHtml(row.key)}"><strong>${escapeHtml(row.key)}${row.key===reviewWeekKey?" (复盘周期发布周)":""}</strong><div class="cohort-cell-maturity">${formatDate(row.publishWeekStart)} ~ ${formatDate(row.publishWeekEnd)} · ${escapeHtml(row.maturityText)} · ${formatInteger(row.postCount)}帖</div></td>${weekCells}<td><div class="cohort-cell"><div class="cohort-cell-value">${formatCompact(row.cumulativeExposure)}</div><div class="cohort-cell-maturity">累计曝光</div></div></td><td><div class="cohort-cell"><div class="cohort-cell-value">${formatPct(row.interactionRate)}</div><div class="cohort-cell-maturity">互动率</div></div></td></tr>`;}).join("");return `${buildMetricCards("cohort")}${buildNarrative("cohort")}<section class="panel"><div class="panel-head"><div class="panel-title"><h3>本周总曝光拆解</h3></div></div><p style="font-size:12px;color:var(--muted);margin-bottom:10px;">按发布周拆解本周的总曝光贡献。</p>${breakdownHtml?`<div class="breakdown-layout"><div class="breakdown-left"><div class="week-breakdown">${breakdownHtml}</div></div><div class="breakdown-right"><div class="breakdown-side-card"><div class="label">📌 最大贡献周</div><div class="value">${escapeHtml(topBreakdownWeek?.key || "暂无")} · ${topBreakdownWeek?.exposure ? formatCompact(topBreakdownWeek.exposure) : "-"} · ${topBreakdownWeek?.exposureShare ? formatPct(topBreakdownWeek.exposureShare) : "-"}</div><div class="note">${topBreakdownWeek?.key === reviewWeekKey ? "复盘周期发布周贡献最大，新帖表现强劲" : topBreakdownWeek?.key === previousReviewWeekKey ? "上一发布周正处于爆发峰值" : "历史帖子仍在持续释放曝光"}</div></div><div class="breakdown-side-card"><div class="label">📊 新老帖占比</div><div class="mini-stacked-bar"><span class="seg-current" style="width:${((breakdown.rows.find(r=>r.key===reviewWeekKey)?.exposureShare||0)*100).toFixed(1)}%"></span><span class="seg-last" style="width:${((breakdown.rows.find(r=>r.key===previousReviewWeekKey)?.exposureShare||0)*100).toFixed(1)}%"></span><span class="seg-older" style="flex:1"></span></div><div class="mini-legend"><span style="font-size:11px;"><span style="display:inline-block;width:8px;height:8px;background:var(--blue);border-radius:2px;vertical-align:middle;"></span> 本周帖 ${breakdown.rows.find(r=>r.key===reviewWeekKey)?.exposure ? formatCompact(breakdown.rows.find(r=>r.key===reviewWeekKey).exposure) : "-"}</span><br><span style="font-size:11px;"><span style="display:inline-block;width:8px;height:8px;background:var(--up);border-radius:2px;vertical-align:middle;"></span> 上周帖 ${breakdown.rows.find(r=>r.key===previousReviewWeekKey)?.exposure ? formatCompact(breakdown.rows.find(r=>r.key===previousReviewWeekKey).exposure) : "-"}</span><br><span style="font-size:11px;"><span style="display:inline-block;width:8px;height:8px;background:var(--line);border-radius:2px;vertical-align:middle;"></span> 更早 ${(()=>{const c=(breakdown.rows.find(r=>r.key===reviewWeekKey)?.exposureShare||0)+(breakdown.rows.find(r=>r.key===previousReviewWeekKey)?.exposureShare||0);return formatPct(Math.max(0,1-c));})()}</span></div></div><div class="breakdown-side-card"><div class="label">⚡ 数据成熟度</div><div class="value">${currentWeekRow ? escapeHtml(currentWeekRow.maturityText) : "该周无帖"}</div><div class="note" style="color:var(--warn);">${!currentWeekRow ? "选中周无发布帖，无法评估成熟度" : currentWeekRow.maturity ? "该周帖子 4 周生命周期已全部走完，数据可做结论" : "该周帖子仅走完 " + currentWeekRow.matureWeeks + "/4 周，结论需谨慎"}</div></div></div></div>`:renderEmpty("当前周期暂无可拆解曝光数据。")}<div class="cohort-legend"><span><b style="color:var(--warn)">■</b> 本周占比 &lt; 30% = 新帖数据未跑满</span><span><b style="color:var(--up)">■</b> 上周占比 &gt; 30% = 上周有爆款</span></div></section><section class="panel"><div class="panel-head"><div class="panel-title"><h3>Cohort 曝光矩阵</h3><p>点击发布周可展开右侧详情。</p></div></div>${matrix.length?`<div class="table-wrap"><table class="cohort-table"><thead><tr><th>发布周</th><th>第1周<br>发布后1-7天</th><th>第2周<br>发布后8-14天</th><th>第3周<br>发布后15-21天</th><th>第4周<br>发布后22-28天</th><th>累计曝光</th><th>互动率</th></tr></thead><tbody>${matrixRows}</tbody></table></div>`:renderEmpty("暂无 Cohort 矩阵数据。")}</section>`;}
-
-  function renderPublishWeekDetail(weekKey,matrixRow,poolPosts){
-    const panel=document.getElementById("publish-week-detail");
-    if(!panel)return;
-    const target=asText(weekKey);
-    const rows=Array.isArray(poolPosts)?poolPosts:[];
-    const weekPosts=rows.filter(post=>{
-      if(!post||!post.publishDateObj)return false;
-      const date=post.publishDateObj;
-      const key=`${date.getFullYear()}-W${`${weekOfYear(date)}`.padStart(2,"0")}`;
-      return key===target;
-    });
-    const totals=weekPosts.reduce((acc,post)=>{
-      const metrics=diffMetrics(post,reviewWindow.start,reviewWindow.end);
-      acc.exposure+=metrics.exposure;
-      acc.interaction+=metrics.interaction;
-      return acc;
-    },{exposure:0,interaction:0});
-    const totalExposure=totals.exposure;
-    const totalInteraction=totals.interaction;
-    const top5=weekPosts.map(post=>{
-      const metrics=diffMetrics(post,reviewWindow.start,reviewWindow.end);
+  function normalizeCohortMatrix(rows){
+    return (rows || []).map(row => {
+      let runningExposure = 0;
+      let runningInteraction = 0;
+      const weeks = (row.windows || []).map(w => {
+        const exposure = asNumber(w.exposure);
+        const interaction = asNumber(w.interaction);
+        runningExposure += exposure;
+        runningInteraction += interaction;
+        return {
+          exposure,
+          interaction,
+          cumulativeExposure: runningExposure,
+          cumulativeInteraction: runningInteraction,
+          maturityText: w.mature ? "成熟" : "未成熟",
+          isImmature: !w.mature
+        };
+      });
       return {
-        title:post.title||"无标题",
-        link:post.link||"",
-        owner:post.owner||"未知",
-        channel:post.displayChannelName||post.channelName||post.platform||"未知",
-        exposure:metrics.exposure,
-        interactionRate:safeRate(metrics.interaction,metrics.exposure)
+        key: row.cohortWeek || row.key,
+        publishWeekStart: row.publishWeekStart,
+        publishWeekEnd: row.publishWeekEnd,
+        postCount: row.postCount || 0,
+        matureWeeks: row.matureWeeks || 0,
+        maturity: row.matureWeeks >= 4,
+        cumulativeExposure: row.totalExposure || 0,
+        cumulativeInteraction: row.totalInteraction || 0,
+        interactionRate: row.interactionRate || 0,
+        maturityText: `成熟 ${formatInteger(row.matureWeeks || 0)}/4 周`,
+        weeks
       };
-    }).sort((a,b)=>b.exposure-a.exposure).slice(0,5);
-    const productLines=deriveProductLineRows(weekPosts);
-    const channels=buildChannelRows(weekPosts,{exposure:totalExposure,interaction:totalInteraction});
-    const periodText=matrixRow&&matrixRow.publishWeekStart&&matrixRow.publishWeekEnd
-      ? `${formatDate(matrixRow.publishWeekStart)} ~ ${formatDate(matrixRow.publishWeekEnd)}`
-      : "该周发布时间范围缺失";
-    const lineBars=productLines.slice(0,5).map(row=>`<div class="bar-row"><div>${escapeHtml(row.label)}</div><div class="bar-track"><span class="bar-fill" style="width:${Math.max(4,Math.round((row.exposureShare||0)*100))}%"></span></div><div>${formatCompact(row.exposure)} · ${formatPct(row.exposureShare)}</div></div>`).join("");
-    const channelBars=channels.slice(0,5).map(row=>`<div class="bar-row"><div>${escapeHtml(row.label)}</div><div class="bar-track"><span class="bar-fill" style="width:${Math.max(4,Math.round((row.exposureShare||0)*100))}%"></span></div><div>${formatCompact(row.exposure)} · ${formatPct(row.exposureShare)}</div></div>`).join("");
-    panel.innerHTML=`<div class="panel-head"><div class="panel-title"><h3>${escapeHtml(target||"发布周详情")}</h3><p>${escapeHtml(periodText)}</p></div><button class="button-sm" type="button" data-action="close-detail">关闭</button></div><div class="metric-grid"><div class="metric-card"><strong>${formatInteger(weekPosts.length)}</strong><p>帖子数</p></div><div class="metric-card"><strong>${formatCompact(totalExposure)}</strong><p>总曝光</p></div><div class="metric-card"><strong>${formatCompact(totalInteraction)}</strong><p>总互动</p></div><div class="metric-card"><strong>${formatPct(safeRate(totalInteraction,totalExposure))}</strong><p>互动率</p></div></div><section class="panel"><div class="panel-head"><div class="panel-title"><h3>品线分布</h3></div></div>${lineBars||renderEmpty("该发布周暂无品线数据。")}</section><section class="panel"><div class="panel-head"><div class="panel-title"><h3>渠道分布</h3></div></div>${channelBars||renderEmpty("该发布周暂无渠道数据。")}</section><section class="panel"><div class="panel-head"><div class="panel-title"><h3>Top 5 帖子（按曝光）</h3></div></div><div class="table-wrap"><table class="data-table"><thead><tr><th>#</th><th>标题</th><th>负责人</th><th>渠道</th><th>曝光</th><th>互动率</th></tr></thead><tbody>${top5.map((item,i)=>`<tr><td>${i+1}</td><td>${item.link?`<a href="${escapeHtml(item.link)}" target="_blank" rel="noopener noreferrer">${escapeHtml(item.title)}</a>`:escapeHtml(item.title)}</td><td>${escapeHtml(item.owner)}</td><td>${escapeHtml(item.channel)}</td><td>${formatCompact(item.exposure)}</td><td>${formatPct(item.interactionRate)}</td></tr>`).join("")||`<tr><td colspan="6">暂无数据</td></tr>`}</tbody></table></div></section>`;
-    panel.hidden=false;
+    });
   }
 
-
-
+  function renderCohort(){
+    const all = deriveForScope("all");
+    const poolPosts = all.poolPosts;
+    const allPosts = preprocessPosts(source.posts || []);
+    const reviewStart = reviewWindow.start;
+    const reviewEnd = reviewWindow.end;
+    const mode = state.cohortMetricMode === "total" ? "total" : "delta";
+    const breakdown = buildWeekBreakdown(poolPosts, reviewStart, reviewEnd);
+    const cohortPosts = allPosts.filter(post => post && post.publishDateObj && post.publishDateObj <= reviewEnd);
+    const matrix = normalizeCohortMatrix(buildCohortMatrix(cohortPosts, reviewEnd));
+    const reviewWeekKey = reviewWindow.start.getFullYear() + "-W" + String(weekOfYear(reviewWindow.start)).padStart(2, "0");
+    const previousReviewWeek = naturalWeekRange(addDays(reviewWindow.start, -7));
+    const previousReviewWeekKey = previousReviewWeek.start.getFullYear() + "-W" + String(weekOfYear(previousReviewWeek.start)).padStart(2, "0");
+    const currentWeekRow = matrix.find(row => row.key === reviewWeekKey);
+    const breakdownRows = breakdown.rows || [];
+    const currentBreakdown = breakdownRows.find(r => r.key === reviewWeekKey);
+    const previousBreakdown = breakdownRows.find(r => r.key === previousReviewWeekKey);
+    const maxBreakdownExposure = Math.max(0, ...breakdownRows.map(row => row.exposure || 0));
+    const yMax = maxBreakdownExposure > 0 ? maxBreakdownExposure : 1;
+    const yTicks = [1, 0.75, 0.5, 0.25, 0].map(tick => `<span>${formatCompact(yMax * tick)}</span>`).join("");
+    const breakdownBars = breakdownRows.map(row => {
+      const isCurrentWeek = row.key === reviewWeekKey;
+      const isLastWeek = row.key === previousReviewWeekKey;
+      const barCls = ["week-breakdown-bar"];
+      if (isCurrentWeek) barCls.push("is-current");
+      if (isLastWeek) barCls.push("is-last");
+      if (!isCurrentWeek && !isLastWeek) barCls.push("is-older");
+      const heightPct = Math.max(8, safeRate(row.exposure || 0, yMax) * 100);
+      return `<div class="week-breakdown-item"><div class="week-breakdown-meta">${formatCompact(row.exposure || 0)}</div><div class="week-breakdown-meta">${formatPct(row.exposureShare || 0)}</div><div class="${barCls.join(" ")}" style="height:${heightPct.toFixed(1)}%;"></div></div>`;
+    }).join("");
+    const breakdownLabels = breakdownRows.map(row => `<div class="week-breakdown-label">${escapeHtml(row.key || "更早")}</div>`).join("");
+    const breakdownHtml = breakdownRows.length ? `<div class="week-breakdown-chart"><div class="week-breakdown-y-axis">${yTicks}</div><div class="week-breakdown-plot">${breakdownBars}</div><div class="week-breakdown-x-axis">${breakdownLabels}</div></div>` : "";
+    const topBreakdownWeek = breakdownRows.reduce((best, row) => (row.exposure || 0) > (best?.exposure || 0) ? row : best, null);
+    const modeToggle = `<div class="segmented-control" aria-label="Cohort 指标模式"><button class="chip-button ${mode === "delta" ? "is-active" : ""}" type="button" data-action="cohort-metric-mode" data-cohort-mode="delta">新增表现</button><button class="chip-button ${mode === "total" ? "is-active" : ""}" type="button" data-action="cohort-metric-mode" data-cohort-mode="total">生命周期累计</button></div>`;
+    const matrixRows = matrix.map((row, ri) => {
+      const weekCells = row.weeks.map((w, wi) => {
+        const value = mode === "total" ? w.cumulativeExposure : w.exposure;
+        const interaction = mode === "total" ? w.cumulativeInteraction : w.interaction;
+        if (!(value > 0 || interaction > 0)) return `<td class="cohort-cell is-empty">-</td>`;
+        const prev = ri > 0 ? matrix[ri - 1]?.weeks?.[wi] : null;
+        const prevValue = prev ? (mode === "total" ? prev.cumulativeExposure : prev.exposure) : 0;
+        const upArrow = !!(prev && value > prevValue * 1.3);
+        const meta = `${w.maturityText} · ${mode === "total" ? "生命周期累计" : "本周新增"}`;
+        return `<td>${renderWeekMeta(formatCompact(value), meta, w.isImmature, upArrow)}</td>`;
+      }).join("");
+      return `<tr class="cohort-row ${row.key === reviewWeekKey ? "is-current-week" : ""}" data-publish-week="${escapeHtml(row.key)}"><td style="cursor:pointer;" data-action="expand-publish-week" data-week-key="${escapeHtml(row.key)}"><strong>${escapeHtml(row.key)}${row.key === reviewWeekKey ? " (复盘周期发布周)" : ""}</strong><div class="cohort-cell-maturity">${formatDate(row.publishWeekStart)} ~ ${formatDate(row.publishWeekEnd)} · ${escapeHtml(row.maturityText)} · ${formatInteger(row.postCount)}帖</div></td>${weekCells}<td><div class="cohort-cell"><div class="cohort-cell-value">${formatCompact(row.cumulativeExposure)}</div><div class="cohort-cell-maturity">生命周期累计</div></div></td><td><div class="cohort-cell"><div class="cohort-cell-value">${formatPct(row.interactionRate)}</div><div class="cohort-cell-maturity">互动率</div></div></td></tr>`;
+    }).join("");
+    return `${buildMetricCards("cohort")}${buildNarrative("cohort")}<section class="panel"><div class="panel-head"><div class="panel-title"><h3>本周新增曝光拆解</h3><p>按发布周拆解复盘周期新增曝光贡献。</p></div></div>${breakdownHtml ? `<div class="breakdown-layout"><div class="breakdown-left"><div class="week-breakdown">${breakdownHtml}</div></div><div class="breakdown-right"><div class="breakdown-side-card"><div class="label">最大贡献周</div><div class="value">${escapeHtml(topBreakdownWeek?.key || "暂无")} · ${topBreakdownWeek?.exposure ? formatCompact(topBreakdownWeek.exposure) : "-"} · ${topBreakdownWeek?.exposureShare ? formatPct(topBreakdownWeek.exposureShare) : "-"}</div><div class="note">${topBreakdownWeek?.key === reviewWeekKey ? "复盘周期发布周贡献最大" : topBreakdownWeek?.key === previousReviewWeekKey ? "上一发布周贡献最大" : "历史发布周仍在释放曝光"}</div></div><div class="breakdown-side-card"><div class="label">颜色定义</div><div class="mini-legend"><span><span class="legend-dot is-current"></span>复盘周期发布周 ${currentBreakdown?.exposure ? formatCompact(currentBreakdown.exposure) : "-"}</span><br><span><span class="legend-dot is-last"></span>上一发布周 ${previousBreakdown?.exposure ? formatCompact(previousBreakdown.exposure) : "-"}</span><br><span><span class="legend-dot is-older"></span>更早历史周</span></div></div><div class="breakdown-side-card"><div class="label">成熟口径</div><div class="value">${currentWeekRow ? escapeHtml(currentWeekRow.maturityText) : "该周无帖"}</div><div class="note">成熟 = 发布后 4 个完整生命周期周均已进入统计。</div></div></div></div>` : renderEmpty("当前周期暂无可拆解曝光数据。")}</section><section class="panel"><div class="panel-head"><div class="panel-title"><h3>Cohort 曝光矩阵</h3><p>点击发布周展开详情；成熟口径按发布后 4 个完整生命周期周计算。</p></div>${modeToggle}</div>${matrix.length ? `<div class="table-wrap"><table class="cohort-table"><thead><tr><th>发布周</th><th>第1周<br>发布后1-7天</th><th>第2周<br>发布后8-14天</th><th>第3周<br>发布后15-21天</th><th>第4周<br>发布后22-28天</th><th>生命周期累计</th><th>互动率</th></tr></thead><tbody>${matrixRows}</tbody></table></div>` : renderEmpty("暂无 Cohort 矩阵数据。")}</section>`;
+  }
+  function renderPublishWeekDetail(weekKey, matrixRow, poolPosts){
+    const panel = document.getElementById("publish-week-detail");
+    if (!panel) return;
+    const target = asText(weekKey);
+    const rows = Array.isArray(poolPosts) ? poolPosts : [];
+    const mode = state.cohortMetricMode === "total" ? "total" : "delta";
+    const weekPosts = rows.filter(post => {
+      if (!post || !post.publishDateObj) return false;
+      const date = post.publishDateObj;
+      const key = `${date.getFullYear()}-W${`${weekOfYear(date)}`.padStart(2, "0")}`;
+      return key === target;
+    });
+    const detailStart = mode === "total" && matrixRow?.publishWeekStart ? matrixRow.publishWeekStart : reviewWindow.start;
+    const detailEnd = mode === "total" && matrixRow?.publishWeekStart ? addDays(matrixRow.publishWeekStart, 27) : reviewWindow.end;
+    const modeLabel = mode === "total" ? "生命周期累计" : "本周新增";
+    const totals = weekPosts.reduce((acc, post) => {
+      const metrics = diffMetrics(post, detailStart, detailEnd);
+      acc.exposure += metrics.exposure;
+      acc.interaction += metrics.interaction;
+      return acc;
+    }, { exposure: 0, interaction: 0 });
+    const totalExposure = totals.exposure;
+    const totalInteraction = totals.interaction;
+    const top5 = weekPosts.map(post => {
+      const metrics = diffMetrics(post, detailStart, detailEnd);
+      return {
+        title: asText(post.title) || shortDisplayUrl(post.link) || "-",
+        link: asText(post.link),
+        owner: asText(post.owner) || "未知",
+        channel: asText(post.displayChannelName || post.channelName || post.platform) || "未知",
+        exposure: metrics.exposure,
+        interactionRate: safeRate(metrics.interaction, metrics.exposure)
+      };
+    }).sort((a, b) => b.exposure - a.exposure).slice(0, 5);
+    const productLines = deriveProductLineRows(weekPosts);
+    const channels = buildChannelRows(weekPosts, { exposure: totalExposure, interaction: totalInteraction });
+    const periodText = matrixRow && matrixRow.publishWeekStart && matrixRow.publishWeekEnd
+      ? `${formatDate(matrixRow.publishWeekStart)} ~ ${formatDate(matrixRow.publishWeekEnd)}`
+      : "该周发布时间范围缺失";
+    const metricPeriodText = `${formatDate(detailStart)} ~ ${formatDate(detailEnd)}`;
+    const lineBars = productLines.slice(0, 5).map(row => `<div class="bar-row"><div>${escapeHtml(row.label)}</div><div class="bar-track"><span class="bar-fill" style="width:${Math.max(4, Math.round((row.exposureShare || 0) * 100))}%"></span></div><div>${formatCompact(row.exposure)} · ${formatPct(row.exposureShare)}</div></div>`).join("");
+    const channelBars = channels.slice(0, 5).map(row => `<div class="bar-row"><div>${escapeHtml(row.label)}</div><div class="bar-track"><span class="bar-fill" style="width:${Math.max(4, Math.round((row.exposureShare || 0) * 100))}%"></span></div><div>${formatCompact(row.exposure)} · ${formatPct(row.exposureShare)}</div></div>`).join("");
+    panel.innerHTML = `<div class="panel-head"><div class="panel-title"><h3>${escapeHtml(target || "发布周详情")}</h3><p>发布周：${escapeHtml(periodText)}；指标口径：${escapeHtml(modeLabel)} ${escapeHtml(metricPeriodText)}</p></div><button class="button-sm" type="button" data-action="close-detail">关闭</button></div><div class="metric-grid"><div class="metric-card"><div class="metric-card-title">帖子数</div><strong>${formatInteger(weekPosts.length)}</strong><p>该发布周帖子</p></div><div class="metric-card"><div class="metric-card-title">曝光</div><strong>${formatCompact(totalExposure)}</strong><p>${escapeHtml(modeLabel)}</p></div><div class="metric-card"><div class="metric-card-title">互动</div><strong>${formatCompact(totalInteraction)}</strong><p>${escapeHtml(modeLabel)}</p></div><div class="metric-card"><div class="metric-card-title">互动率</div><strong>${formatPct(safeRate(totalInteraction, totalExposure))}</strong><p>互动 ÷ 曝光</p></div></div><section class="panel"><div class="panel-head"><div class="panel-title"><h3>品线分布</h3></div></div>${lineBars || renderEmpty("该发布周暂无品线数据。")}</section><section class="panel"><div class="panel-head"><div class="panel-title"><h3>渠道分布</h3></div></div>${channelBars || renderEmpty("该发布周暂无渠道数据。")}</section><section class="panel"><div class="panel-head"><div class="panel-title"><h3>Top 5 帖子（按曝光）</h3></div></div><div class="table-wrap"><table class="data-table"><thead><tr><th>#</th><th>标题</th><th>负责人</th><th>渠道</th><th>曝光</th><th>互动率</th></tr></thead><tbody>${top5.map((item, i) => `<tr><td>${i + 1}</td><td>${item.link ? `<a href="${escapeHtml(item.link)}" target="_blank" rel="noopener noreferrer">${escapeHtml(item.title)}</a>` : escapeHtml(item.title)}</td><td>${escapeHtml(item.owner)}</td><td>${escapeHtml(item.channel)}</td><td>${formatCompact(item.exposure)}</td><td>${formatPct(item.interactionRate)}</td></tr>`).join("") || `<tr><td colspan="6">暂无数据</td></tr>`}</tbody></table></div></section>`;
+    panel.hidden = false;
+  }
   function lifecycleDiagnosis(row, gap, isCommunity){
     if (!row.posts) return "无数据";
     if (isCommunity) {

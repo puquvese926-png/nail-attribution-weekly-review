@@ -7,6 +7,7 @@ const LARK_CLI = resolveLarkCli();
 const SPREADSHEET_TOKEN = "Fg4jsK4dUhJOyVtsgw7cTwrCnpd";
 const SHEETS = {
   independent: { id: "Aehu8s", range: "A1:M500", title: "独立站数据（@fufu+锦怡+林凡）" },
+  tiktokShop: { id: "topMD7", range: "A1:K500", title: "tiktok shop数据（@香宇）" },
   pr: { id: "LxbXXL", range: "A1:E260", title: "PR(@Ted+美娜）" }
 };
 
@@ -99,6 +100,8 @@ function parseNumber(value) {
   const text = String(value).trim();
   if (!text || text === "/" || text.toUpperCase() === "#DIV/0!") return 0;
   const normalized = text.replace(/,/g, "");
+  const pct = normalized.match(/^([+-]?\d+(\.\d+)?)%$/);
+  if (pct) return Number(pct[1]) / 100;
   if (/^[+-]?\d+(\.\d+)?$/.test(normalized)) return Number(normalized);
   if (/^[\d+\-.\s]+$/.test(normalized)) {
     return normalized.split("+").reduce((acc, part) => acc + (Number(part.trim()) || 0), 0);
@@ -608,6 +611,28 @@ function independentRows(values, start, end, previousStart, previousEnd, lastYea
   ]);
 }
 
+function tiktokShopRows(values, start, end, previousStart, previousEnd, lastYearStart, lastYearEnd) {
+  const { rows } = splitRows(values);
+  const collect = (targetStart, targetEnd, field) => rowsForWeek(rows, targetStart, targetEnd).map(row => {
+    const item = {
+      label: `${row[2] || "TikTok Shop"} ${row[3] || ""}`.trim(),
+      type: "TikTok Shop",
+      channel: String(row[2] || "TikTok Shop"),
+      site: String(row[3] || "-"),
+      metric: "exposure",
+      contentCount: parseNumber(row[4]),
+      [field]: parseNumber(row[5])
+    };
+    if (field === "current") item.interaction = parseNumber(row[8]) + parseNumber(row[9]);
+    return item;
+  });
+  return groupByLabel([
+    ...collect(start, end, "current"),
+    ...collect(previousStart, previousEnd, "previous"),
+    ...collect(lastYearStart, lastYearEnd, "lastYear")
+  ]);
+}
+
 function prMetrics(values, start, end) {
   const { rows } = splitRows(values);
   const matched = rowsForWeek(rows, start, end);
@@ -626,13 +651,17 @@ async function buildDtcSection(start, end) {
   const previousEnd = addDays(end, -7);
   const lastYearStart = addDays(start, -364);
   const lastYearEnd = addDays(end, -364);
-  const [independent, pr] = await Promise.all([
+  const [independent, tiktokShop, pr] = await Promise.all([
     readSheet(SHEETS.independent),
+    readSheet(SHEETS.tiktokShop),
     readSheet(SHEETS.pr)
   ]);
-  const rows = independentRows(independent, start, end, previousStart, previousEnd, lastYearStart, lastYearEnd);
+  const rows = groupByLabel([
+    ...independentRows(independent, start, end, previousStart, previousEnd, lastYearStart, lastYearEnd),
+    ...tiktokShopRows(tiktokShop, start, end, previousStart, previousEnd, lastYearStart, lastYearEnd)
+  ]);
   const prMetricCards = prMetrics(pr, start, end);
-  const sources = [independent].map(values => splitRows(values).rows);
+  const sources = [independent, tiktokShop].map(values => splitRows(values).rows);
   const hasRowsForWindow = (targetStart, targetEnd) => sources.some(rowsForSource => rowsForWeek(rowsForSource, targetStart, targetEnd).length > 0);
   const hasCurrentData = hasRowsForWindow(start, end);
   const hasPreviousData = hasRowsForWindow(previousStart, previousEnd);
@@ -655,7 +684,7 @@ async function buildDtcSection(start, end) {
       type: "feishu",
       spreadsheetToken: SPREADSHEET_TOKEN,
       sheets: Object.values(SHEETS).map(sheet => ({ id: sheet.id, title: sheet.title })),
-      note: hasCurrentData ? "只读同步；指标卡片来自 PR sheet，表格来自独立站数据 sheet。" : "只读同步；飞书未找到当前复盘周期独立站数据，指标卡片来自 PR sheet。"
+      note: hasCurrentData ? "只读同步；指标卡片来自 PR sheet，表格来自独立站数据和 TikTok Shop sheet。" : "只读同步；飞书未找到当前复盘周期站外表格数据，指标卡片来自 PR sheet。"
     }
   };
 }
@@ -703,6 +732,7 @@ if (require.main === module) {
 }
 
 module.exports = {
+  buildDtcSection,
   buildWarehousePosts,
   dateKey,
   parseDate,

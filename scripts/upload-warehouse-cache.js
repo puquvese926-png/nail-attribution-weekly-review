@@ -2,6 +2,7 @@ const crypto = require("crypto");
 const fs = require("fs");
 const path = require("path");
 const {
+  buildDtcSection,
   buildWarehousePosts,
   resolveWarehouseFullRange
 } = require("../offsite-lark-sync-server.js");
@@ -52,6 +53,17 @@ async function main() {
     ? await resolveWarehouseFullRange({ env: process.env })
     : parseRangeFromArgs();
   const source = await buildWarehousePosts(range.start, range.end, { env: process.env });
+  const offsiteRange = parseOffsiteRangeFromArgs() || defaultOffsiteRange();
+  try {
+    source.dtcSection = await buildDtcSection(offsiteRange.start, offsiteRange.end);
+    source.dtcSection.cacheRange = {
+      start: dateKey(offsiteRange.start),
+      end: dateKey(offsiteRange.end)
+    };
+    console.log(`Included offsite cache range ${source.dtcSection.cacheRange.start} ~ ${source.dtcSection.cacheRange.end}`);
+  } catch (error) {
+    console.warn(`Offsite cache skipped: ${error.message || error}`);
+  }
   const payloadText = JSON.stringify({ ok: true, source });
   const total = Math.ceil(payloadText.length / chunkSize);
   const auth = `Bearer ${process.env.WAREHOUSE_UPLOAD_TOKEN}`;
@@ -104,6 +116,45 @@ function parseRangeFromArgs() {
     throw new Error("start/end 日期无效");
   }
   return { start, end };
+}
+
+function parseOffsiteRangeFromArgs() {
+  const startIndex = process.argv.indexOf("--offsite-start");
+  const endIndex = process.argv.indexOf("--offsite-end");
+  if (startIndex < 0 && endIndex < 0) return null;
+  if (startIndex < 0 || endIndex < 0) throw new Error("站外数据范围必须同时提供 --offsite-start YYYY-MM-DD --offsite-end YYYY-MM-DD");
+  const start = new Date(process.argv[startIndex + 1]);
+  const end = new Date(process.argv[endIndex + 1]);
+  if (Number.isNaN(start.getTime()) || Number.isNaN(end.getTime())) {
+    throw new Error("offsite start/end 日期无效");
+  }
+  return { start, end };
+}
+
+function defaultOffsiteRange() {
+  const today = new Date();
+  today.setHours(0, 0, 0, 0);
+  const latestCompleteReviewWeek = naturalWeekRange(addDays(today, -7));
+  const start = addDays(latestCompleteReviewWeek.start, -7);
+  const end = addDays(latestCompleteReviewWeek.end, -7);
+  return { start, end };
+}
+
+function naturalWeekRange(date) {
+  const day = (date.getDay() + 6) % 7;
+  const start = addDays(date, -day);
+  const end = addDays(start, 6);
+  return { start, end };
+}
+
+function addDays(date, days) {
+  const next = new Date(date);
+  next.setDate(next.getDate() + days);
+  return next;
+}
+
+function dateKey(date) {
+  return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, "0")}-${String(date.getDate()).padStart(2, "0")}`;
 }
 
 function loadUploadToken(filePath) {
