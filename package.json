@@ -3,8 +3,19 @@
   "private": true,
   "version": "1.0.0",
   "scripts": {
+    "localdb:bootstrap": "node scripts/sync-local-review-db.js --full",
+    "localdb:sync": "node scripts/sync-local-review-db.js --full",
+    "localdb:sync:warehouse": "node scripts/sync-local-review-db.js --full --warehouse-only",
+    "localdb:sync:offsite": "node scripts/sync-local-review-db.js --full --offsite-only",
+    "localdb:validate-upload": "node scripts/validate-local-review-upload.js",
+    "localdb:install-task": "powershell -ExecutionPolicy Bypass -File .\\scripts\\install-local-review-sync-task.ps1 -At 09:00",
+    "localdb:install-task:warehouse": "powershell -ExecutionPolicy Bypass -File .\\scripts\\install-local-review-warehouse-task.ps1 -At 09:00",
+    "localdb:install-task:warehouse-with-friday-upload-chain": "powershell -ExecutionPolicy Bypass -File .\\scripts\\install-local-review-warehouse-task.ps1 -At 09:00 -FridayAt 19:30",
+    "localdb:install-task:offsite": "powershell -ExecutionPolicy Bypass -File .\\scripts\\install-local-review-offsite-task.ps1 -At 19:00",
+    "localdb:install-task:upload-precheck": "powershell -ExecutionPolicy Bypass -File .\\scripts\\install-local-review-upload-precheck-task.ps1 -At 19:45",
+    "localdb:install-task:netlify-upload": "powershell -ExecutionPolicy Bypass -File .\\scripts\\install-local-review-netlify-upload-task.ps1 -At 20:00",
     "warehouse:upload:full": "node scripts/upload-warehouse-cache.js --full",
-    "warehouse:upload:incremental": "node scripts/upload-warehouse-cache.js --incremental --days 14"
+    "warehouse:upload:incremental": "node scripts/upload-warehouse-cache.js --full"
   },
   "dependencies": {
     "@netlify/blobs": "^10.7.9",

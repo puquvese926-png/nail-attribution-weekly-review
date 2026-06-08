@@ -2,12 +2,18 @@ const crypto = require("crypto");
 const fs = require("fs");
 const path = require("path");
 const {
-  buildDtcSection,
-  buildWarehousePosts,
-  resolveWarehouseFullRange
-} = require("../offsite-lark-sync-server.js");
+  DEFAULT_DB_PATH,
+  buildLocalReviewCachePackage
+} = require("./local-review-cache-package.js");
+const {
+  DEFAULT_BASELINE_PATH,
+  DEFAULT_REPORT_PATH,
+  validateLocalReviewUpload,
+  writeReport
+} = require("./validate-local-review-upload.js");
 
 const DEFAULT_CHUNK_SIZE = 750 * 1024;
+const DEFAULT_NETLIFY_SITE_URL = "https://nail-attribution-console-demo.netlify.app";
 
 function loadDotEnv(filePath) {
   if (!fs.existsSync(filePath)) return;
@@ -28,6 +34,19 @@ function requiredEnv(keys) {
   if (missing.length) throw new Error(`缺少环境变量：${missing.join(", ")}`);
 }
 
+function readStringArg(argv, name) {
+  const index = argv.indexOf(name);
+  return index >= 0 ? argv[index + 1] : "";
+}
+
+function parseUploadArgs(argv) {
+  return {
+    dbPath: readStringArg(argv, "--db-path") || process.env.LOCAL_REVIEW_DB_PATH || DEFAULT_DB_PATH,
+    reportPath: readStringArg(argv, "--report-path") || DEFAULT_REPORT_PATH,
+    baselinePath: readStringArg(argv, "--baseline-path") || DEFAULT_BASELINE_PATH
+  };
+}
+
 async function requestJson(url, options) {
   const response = await fetch(url, options);
   const payload = await response.json().catch(() => null);
@@ -37,37 +56,46 @@ async function requestJson(url, options) {
   return payload;
 }
 
+function loadUploadToken(filePath) {
+  if (process.env.WAREHOUSE_UPLOAD_TOKEN || !fs.existsSync(filePath)) return;
+  const token = fs.readFileSync(filePath, "utf8").trim();
+  if (token) process.env.WAREHOUSE_UPLOAD_TOKEN = token;
+}
+
+function runPreUploadValidation(args) {
+  const report = validateLocalReviewUpload(args);
+  writeReport(args.reportPath, report);
+  if (report.ok) {
+    writeReport(args.baselinePath, report);
+    return report;
+  }
+  const failed = report.checks
+    .filter(check => !check.ok && check.severity === "error")
+    .map(check => check.name);
+  throw new Error(`上传前校验未通过，已阻止上传：${failed.join(", ")}`);
+}
+
 async function main() {
   loadDotEnv(path.join(__dirname, "..", ".env.local"));
   loadUploadToken(path.join(__dirname, "..", ".warehouse-upload-token.local"));
-  requiredEnv(["DB_HOST", "DB_PORT", "DB_USER", "DB_PASSWORD", "NETLIFY_SITE_URL", "WAREHOUSE_UPLOAD_TOKEN"]);
+  if (!process.env.NETLIFY_SITE_URL) process.env.NETLIFY_SITE_URL = DEFAULT_NETLIFY_SITE_URL;
+  requiredEnv(["WAREHOUSE_UPLOAD_TOKEN"]);
 
-  const incremental = process.argv.includes("--incremental");
-  const full = !incremental && (process.argv.includes("--full") || !process.argv.includes("--range"));
+  const args = parseUploadArgs(process.argv.slice(2));
+  const validation = runPreUploadValidation(args);
+  const payload = buildLocalReviewCachePackage({ dbPath: args.dbPath });
+  const source = payload.source;
+  const payloadText = JSON.stringify({ ok: true, source });
   const siteUrl = process.env.NETLIFY_SITE_URL.replace(/\/$/, "");
   const uploadId = `wh-${new Date().toISOString().replace(/[^0-9]/g, "")}-${crypto.randomBytes(4).toString("hex")}`;
   const chunkSize = Number(process.env.WAREHOUSE_UPLOAD_CHUNK_SIZE || DEFAULT_CHUNK_SIZE);
-  const range = incremental
-    ? incrementalRangeFromArgs()
-    : full
-    ? await resolveWarehouseFullRange({ env: process.env })
-    : parseRangeFromArgs();
-  const source = await buildWarehousePosts(range.start, range.end, { env: process.env });
-  const offsiteRange = parseOffsiteRangeFromArgs() || defaultOffsiteRange();
-  try {
-    source.dtcSection = await buildDtcSection(offsiteRange.start, offsiteRange.end);
-    source.dtcSection.cacheRange = {
-      start: dateKey(offsiteRange.start),
-      end: dateKey(offsiteRange.end)
-    };
-    console.log(`Included offsite cache range ${source.dtcSection.cacheRange.start} ~ ${source.dtcSection.cacheRange.end}`);
-  } catch (error) {
-    console.warn(`Offsite cache skipped: ${error.message || error}`);
-  }
-  const payloadText = JSON.stringify({ ok: true, source });
   const total = Math.ceil(payloadText.length / chunkSize);
   const auth = `Bearer ${process.env.WAREHOUSE_UPLOAD_TOKEN}`;
-  console.log(`Uploading ${source.posts.length} posts, ${source.audit.totalRows} rows, ${total} chunks, range ${source.importMeta.range}`);
+
+  console.log(`Pre-upload validation passed: ${args.reportPath}`);
+  console.log(`Uploading local SQLite package from ${args.dbPath}`);
+  console.log(`Uploading ${source.posts.length} posts, ${source.audit.totalRows} snapshot rows, ${total} chunks, range ${source.importMeta.range}`);
+  console.log(`Offsite range: ${validation.summary.offsiteRange?.start || "N/A"} ~ ${validation.summary.offsiteRange?.end || "N/A"}`);
 
   for (let index = 0; index < total; index += 1) {
     const chunk = payloadText.slice(index * chunkSize, (index + 1) * chunkSize);
@@ -82,85 +110,15 @@ async function main() {
     console.log(`Uploaded chunk ${index + 1}/${total}`);
   }
 
-  const mode = incremental ? "merge-full" : "replace";
-  const commitUrl = `${siteUrl}/api/posts/warehouse-upload-commit?full=${full || incremental ? "1" : "0"}`;
-  const result = await requestJson(commitUrl, {
+  const result = await requestJson(`${siteUrl}/api/posts/warehouse-upload-commit?full=1`, {
     method: "POST",
     headers: {
       "Authorization": auth,
       "Content-Type": "application/json"
     },
-    body: JSON.stringify({ uploadId, total, mode })
+    body: JSON.stringify({ uploadId, total, mode: "replace" })
   });
   console.log(`Committed cache ${result.cacheKey}: ${JSON.stringify(result.meta)}`);
-}
-
-function incrementalRangeFromArgs() {
-  const daysIndex = process.argv.indexOf("--days");
-  const days = daysIndex >= 0 ? Number(process.argv[daysIndex + 1]) : 14;
-  if (!Number.isFinite(days) || days <= 0) throw new Error("--days 必须是正数");
-  const end = new Date();
-  end.setHours(0, 0, 0, 0);
-  const start = new Date(end);
-  start.setDate(start.getDate() - days + 1);
-  return { start, end };
-}
-
-function parseRangeFromArgs() {
-  const startIndex = process.argv.indexOf("--start");
-  const endIndex = process.argv.indexOf("--end");
-  if (startIndex < 0 || endIndex < 0) throw new Error("指定 --range 时必须提供 --start YYYY-MM-DD --end YYYY-MM-DD");
-  const start = new Date(process.argv[startIndex + 1]);
-  const end = new Date(process.argv[endIndex + 1]);
-  if (Number.isNaN(start.getTime()) || Number.isNaN(end.getTime())) {
-    throw new Error("start/end 日期无效");
-  }
-  return { start, end };
-}
-
-function parseOffsiteRangeFromArgs() {
-  const startIndex = process.argv.indexOf("--offsite-start");
-  const endIndex = process.argv.indexOf("--offsite-end");
-  if (startIndex < 0 && endIndex < 0) return null;
-  if (startIndex < 0 || endIndex < 0) throw new Error("站外数据范围必须同时提供 --offsite-start YYYY-MM-DD --offsite-end YYYY-MM-DD");
-  const start = new Date(process.argv[startIndex + 1]);
-  const end = new Date(process.argv[endIndex + 1]);
-  if (Number.isNaN(start.getTime()) || Number.isNaN(end.getTime())) {
-    throw new Error("offsite start/end 日期无效");
-  }
-  return { start, end };
-}
-
-function defaultOffsiteRange() {
-  const today = new Date();
-  today.setHours(0, 0, 0, 0);
-  const latestCompleteReviewWeek = naturalWeekRange(addDays(today, -7));
-  const start = addDays(latestCompleteReviewWeek.start, -7);
-  const end = addDays(latestCompleteReviewWeek.end, -7);
-  return { start, end };
-}
-
-function naturalWeekRange(date) {
-  const day = (date.getDay() + 6) % 7;
-  const start = addDays(date, -day);
-  const end = addDays(start, 6);
-  return { start, end };
-}
-
-function addDays(date, days) {
-  const next = new Date(date);
-  next.setDate(next.getDate() + days);
-  return next;
-}
-
-function dateKey(date) {
-  return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, "0")}-${String(date.getDate()).padStart(2, "0")}`;
-}
-
-function loadUploadToken(filePath) {
-  if (process.env.WAREHOUSE_UPLOAD_TOKEN || !fs.existsSync(filePath)) return;
-  const token = fs.readFileSync(filePath, "utf8").trim();
-  if (token) process.env.WAREHOUSE_UPLOAD_TOKEN = token;
 }
 
 main().catch(error => {

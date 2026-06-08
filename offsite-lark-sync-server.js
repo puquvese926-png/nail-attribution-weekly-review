@@ -1,9 +1,12 @@
 const http = require("http");
 const fs = require("fs");
+const path = require("path");
 const { spawn } = require("child_process");
+const { DatabaseSync } = require("node:sqlite");
 
 const PORT = Number(process.env.OFFSITE_SYNC_PORT || 8787);
 const LARK_CLI = resolveLarkCli();
+const LOCAL_REVIEW_DB_PATH = process.env.LOCAL_REVIEW_DB_PATH || path.join("C:\\Users\\HP\\DataGripProjects\\数仓", "local_cache", "weekly_review_cache.sqlite");
 const SPREADSHEET_TOKEN = "Fg4jsK4dUhJOyVtsgw7cTwrCnpd";
 const SHEETS = {
   independent: { id: "Aehu8s", range: "A1:M500", title: "独立站数据（@fufu+锦怡+林凡）" },
@@ -24,10 +27,65 @@ function sendJson(res, status, payload) {
   res.writeHead(status, {
     "Content-Type": "application/json; charset=utf-8",
     "Access-Control-Allow-Origin": "*",
-    "Access-Control-Allow-Methods": "GET, OPTIONS",
+    "Access-Control-Allow-Methods": "GET, POST, OPTIONS",
     "Access-Control-Allow-Headers": "Content-Type"
   });
   res.end(JSON.stringify(payload));
+}
+
+let localDb = null;
+
+function localDbDir() {
+  return path.dirname(LOCAL_REVIEW_DB_PATH);
+}
+
+function ensureNoteSchema(db) {
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS post_notes (
+      post_key TEXT PRIMARY KEY,
+      post_title TEXT,
+      post_link TEXT,
+      note TEXT NOT NULL DEFAULT '',
+      updated_at TEXT NOT NULL
+    );
+  `);
+}
+
+function getLocalDb() {
+  if (localDb) return localDb;
+  fs.mkdirSync(localDbDir(), { recursive: true });
+  localDb = new DatabaseSync(LOCAL_REVIEW_DB_PATH);
+  ensureNoteSchema(localDb);
+  return localDb;
+}
+
+function nowIso() {
+  return new Date().toISOString();
+}
+
+function readJsonBody(req) {
+  return new Promise((resolve, reject) => {
+    let body = "";
+    req.on("data", chunk => {
+      body += chunk;
+      if (body.length > 1024 * 1024) {
+        reject(new Error("请求体过大"));
+        req.destroy();
+      }
+    });
+    req.on("end", () => {
+      if (!body) {
+        resolve({});
+        return;
+      }
+      try {
+        resolve(JSON.parse(body));
+      } catch (error) {
+        reject(new Error("请求体不是有效 JSON"));
+      }
+    });
+    req.on("error", reject);
+  });
 }
 
 function loadMysql() {
@@ -130,7 +188,13 @@ function parseDateTime(value) {
 }
 
 function normalizeWarehouseUrl(value) {
-  return String(value || "").trim().replace(/[?#].*$/, "").replace(/\/$/, "");
+  return String(value || "")
+    .trim()
+    .toLowerCase()
+    .replace(/[?#].*$/, "")
+    .replace(/\/reels\//, "/p/")
+    .replace(/\/(reel|tv)\//, "/p/")
+    .replace(/\/$/, "");
 }
 
 function postKey(platform, postId, link) {
@@ -161,6 +225,8 @@ function upsertPostSnapshot(posts, row) {
   if (!posts.has(key)) {
     posts.set(key, {
       id: `wh-${key.replace(/[^a-z0-9]+/gi, "-").replace(/^-|-$/g, "")}`,
+      postKey: key,
+      postId: row.post_id || "",
       link: row.post_link || "",
       title: row.title || row.content_text || "",
       platform: row.platform,
@@ -235,6 +301,8 @@ async function resolveWarehouseFullRange(options = {}) {
         union all select business_date from ods.ods_meta_day_published_post_reel_list_di
         union all select business_date from ods.ods_pinterest_day_profile_posts_di
         union all select business_date from ods.ods_facebook_day_group_insights_posts_di
+        union all select business_date from ods.ods_youtubeStudio_day_video_detail_di
+        union all select business_date from ods.ods_youtube_day_video_detail_di
       ) dates
       where dt is not null
     `);
@@ -423,11 +491,48 @@ async function buildWarehousePosts(start, end, options = {}) {
       from ods.ods_pinterest_day_profile_posts_di
       where business_date between ? and ?
       union all
+      select business_date,
+             '社媒',
+             'youtube',
+             'yt',
+             cast(video_id as char),
+             coalesce(watch_url, share_url),
+             title,
+             publish_time,
+             null,
+             coalesce(view_count, external_view_count),
+             like_count,
+             comment_count,
+             null,
+             null,
+             coalesce(like_count,0)+coalesce(comment_count,0)
+      from ods.ods_youtubeStudio_day_video_detail_di
+      where business_date between ? and ?
+      union all
+      select business_date,
+             coalesce(channel_type, 'KOL'),
+             'youtube',
+             'yt',
+             cast(video_id as char),
+             url,
+             title,
+             publish_date,
+             null,
+             cast(replace(coalesce(view_count,0), ',', '') as decimal(20,4)),
+             cast(replace(coalesce(like_count,0), ',', '') as decimal(20,4)),
+             cast(replace(coalesce(comment_count,0), ',', '') as decimal(20,4)),
+             null,
+             null,
+             cast(replace(coalesce(like_count,0), ',', '') as decimal(20,4))
+               + cast(replace(coalesce(comment_count,0), ',', '') as decimal(20,4))
+      from ods.ods_youtube_day_video_detail_di
+      where business_date between ? and ?
+      union all
       select p.business_date,
              '社群',
-             'facebook',
+             coalesce(p.group_name, p.group_code, 'Facebook社群'),
              'fb',
-             cast(p.post_id as char),
+             concat(coalesce(p.group_code, 'fb-group'), '::', cast(p.post_id as char)),
              p.post_link,
              p.title,
              p.publish_date,
@@ -455,48 +560,177 @@ async function buildWarehousePosts(start, end, options = {}) {
       where coalesce(deleted, 0) = 0
       group by channel_link_id
     ),
-    biz as (
-      select l.post_link,
-             max(p.project_name) project_name,
-             max(l.manager) manager,
-             max(l.content_source) content_source,
-             max(l.cooperation_requirements) cooperation_requirements,
-             max(l.content_form) content_form,
-             max(l.marketing_funnel_level) marketing_funnel_level,
-             max(l.content_themes) content_themes,
-             max(l.is_high_quality_content) is_high_quality_content,
-             max(m.first_type) first_type,
-             max(m.second_type) second_type,
-             max(m.sku_count) sku_count
+    biz_raw as (
+      select l.id channel_link_id,
+             l.project_id,
+             case
+               when lower(l.post_link) like '%instagram.com%'
+                    and regexp_extract(l.post_link, '/(p|reel|reels|tv)/([^/?#]+)', 2) <> ''
+                 then concat('ins:', regexp_extract(l.post_link, '/(p|reel|reels|tv)/([^/?#]+)', 2))
+               when lower(l.post_link) like '%tiktok.com%'
+                    and regexp_extract(l.post_link, '/(video|photo)/([0-9]+)', 2) <> ''
+                 then concat('tk:', regexp_extract(l.post_link, '/(video|photo)/([0-9]+)', 2))
+               when lower(l.post_link) like '%facebook.com%'
+                    and regexp_extract(l.post_link, '/reel/([0-9]+)', 1) <> ''
+                 then concat('fb:', regexp_extract(l.post_link, '/reel/([0-9]+)', 1))
+               when lower(l.post_link) like '%facebook.com%'
+                    and regexp_extract(l.post_link, '/videos/([0-9]+)', 1) <> ''
+                 then concat('fb:', regexp_extract(l.post_link, '/videos/([0-9]+)', 1))
+               when lower(l.post_link) like '%facebook.com%'
+                    and regexp_extract(l.post_link, '/videos/[^/]+/([0-9]+)', 1) <> ''
+                 then concat('fb:', regexp_extract(l.post_link, '/videos/[^/]+/([0-9]+)', 1))
+               when lower(l.post_link) like '%facebook.com%'
+                    and regexp_extract(l.post_link, '/posts/([0-9]+)', 1) <> ''
+                 then concat('fb:', regexp_extract(l.post_link, '/posts/([0-9]+)', 1))
+               when lower(l.post_link) like '%youtu.be%'
+                    and regexp_extract(l.post_link, 'youtu\\.be/([^/?#]+)', 1) <> ''
+                 then concat('yt:', regexp_extract(l.post_link, 'youtu\\.be/([^/?#]+)', 1))
+               when lower(l.post_link) like '%youtube.com%'
+                    and regexp_extract(l.post_link, '[?&]v=([^&#]+)', 1) <> ''
+                 then concat('yt:', regexp_extract(l.post_link, '[?&]v=([^&#]+)', 1))
+               when lower(l.post_link) like '%youtube.com%'
+                    and regexp_extract(l.post_link, '/shorts/([^/?#]+)', 1) <> ''
+                 then concat('yt:', regexp_extract(l.post_link, '/shorts/([^/?#]+)', 1))
+               else null
+             end post_match_key,
+             regexp_replace(
+               replace(
+                 replace(
+                   replace(
+                     lower(regexp_replace(l.post_link, '[?#].*$', '')),
+                     '/reels/',
+                     '/p/'
+                   ),
+                   '/reel/',
+                   '/p/'
+                 ),
+                 '/tv/',
+                 '/p/'
+               ),
+               '/+$',
+               ''
+             ) post_link_key,
+             l.post_link,
+             p.project_name,
+             l.manager,
+             l.content_source,
+             l.cooperation_requirements,
+             l.content_form,
+             l.marketing_funnel_level,
+             l.content_themes,
+             l.is_high_quality_content,
+             m.first_type,
+             m.second_type,
+             m.sku_count,
+             coalesce(l.oxLtime, l.oxCtime, l.etl_time) biz_sort_time,
+             case when p.project_name is not null and trim(p.project_name) <> '' then 1 else 0 end
+             + case when l.manager is not null and trim(l.manager) <> '' then 1 else 0 end
+             + case when l.content_source is not null then 1 else 0 end
+             + case when l.cooperation_requirements is not null and trim(l.cooperation_requirements) <> '' then 1 else 0 end
+             + case when l.content_form is not null then 1 else 0 end
+             + case when l.marketing_funnel_level is not null and trim(l.marketing_funnel_level) <> '' then 1 else 0 end
+             + case when l.content_themes is not null and trim(l.content_themes) <> '' then 1 else 0 end
+             + case when l.is_high_quality_content is not null then 1 else 0 end
+             + case when m.first_type is not null and trim(m.first_type) <> '' then 1 else 0 end
+             + case when m.second_type is not null and trim(m.second_type) <> '' then 1 else 0 end
+             + case when coalesce(m.sku_count, 0) > 0 then 1 else 0 end filled_field_count
       from ods.ods_sqt_bi_bi_channel_link_df l
-      left join ods.ods_sqt_bi_bi_channel_link_project_df p on p.id = l.project_id
+      left join ods.ods_sqt_bi_bi_channel_link_project_df p
+        on p.id = l.project_id
+       and coalesce(p.deleted, 0) = 0
       left join link_msku m on m.channel_link_id = l.id
       where l.post_link is not null and l.post_link <> ''
         and coalesce(l.deleted, 0) = 0
-      group by l.post_link
+    ),
+    biz_key_one as (
+      select *
+      from (
+        select br.*,
+               row_number() over (
+                 partition by br.post_match_key
+                 order by br.filled_field_count desc, br.biz_sort_time desc, br.channel_link_id desc
+               ) rn
+        from biz_raw br
+        where br.post_match_key is not null and br.post_match_key <> ''
+      ) t
+      where rn = 1
+    ),
+    biz_link_one as (
+      select *
+      from (
+        select br.*,
+               row_number() over (
+                 partition by br.post_link_key
+                 order by br.filled_field_count desc, br.biz_sort_time desc, br.channel_link_id desc
+               ) rn
+        from biz_raw br
+        where br.post_link_key is not null and br.post_link_key <> ''
+      ) t
+      where rn = 1
     )
     select m.*,
            d.content_type,
            coalesce(d.title, m.title) dim_title,
            coalesce(d.post_link, m.post_link) dim_link,
-           b.project_name,
-           b.manager,
-           b.content_source,
-           b.cooperation_requirements,
-           b.content_form,
-           b.marketing_funnel_level,
-           b.content_themes,
-           b.is_high_quality_content,
-           b.first_type,
-           b.second_type,
-           b.sku_count
+           coalesce(bk.project_name, bl.project_name) project_name,
+           coalesce(bk.manager, bl.manager) manager,
+           coalesce(bk.content_source, bl.content_source) content_source,
+           coalesce(bk.cooperation_requirements, bl.cooperation_requirements) cooperation_requirements,
+           coalesce(bk.content_form, bl.content_form) content_form,
+           coalesce(bk.marketing_funnel_level, bl.marketing_funnel_level) marketing_funnel_level,
+           coalesce(bk.content_themes, bl.content_themes) content_themes,
+           coalesce(bk.is_high_quality_content, bl.is_high_quality_content) is_high_quality_content,
+           coalesce(bk.first_type, bl.first_type) first_type,
+           coalesce(bk.second_type, bl.second_type) second_type,
+           coalesce(bk.sku_count, bl.sku_count) sku_count
     from metrics m
     left join dwd.dwd_social_post_dim_df d
       on d.dt = m.stat_date
      and d.platform = m.platform
      and d.post_id = m.post_id
-    left join biz b
-      on replace(regexp_replace(coalesce(d.post_link, m.post_link), '[?#].*$', ''), '/$', '') = replace(regexp_replace(b.post_link, '[?#].*$', ''), '/$', '')
+    left join biz_key_one bk
+      on case
+           when m.platform = 'ins'
+                and regexp_extract(coalesce(d.post_link, m.post_link), '/(p|reel|reels|tv)/([^/?#]+)', 2) <> ''
+             then concat('ins:', regexp_extract(coalesce(d.post_link, m.post_link), '/(p|reel|reels|tv)/([^/?#]+)', 2))
+           when m.platform = 'tk'
+                and regexp_extract(coalesce(d.post_link, m.post_link), '/(video|photo)/([0-9]+)', 2) <> ''
+             then concat('tk:', regexp_extract(coalesce(d.post_link, m.post_link), '/(video|photo)/([0-9]+)', 2))
+           when m.platform = 'fb'
+                and regexp_extract(coalesce(d.post_link, m.post_link), '/reel/([0-9]+)', 1) <> ''
+             then concat('fb:', regexp_extract(coalesce(d.post_link, m.post_link), '/reel/([0-9]+)', 1))
+           when m.platform = 'yt'
+                and regexp_extract(coalesce(d.post_link, m.post_link), 'youtu\\.be/([^/?#]+)', 1) <> ''
+             then concat('yt:', regexp_extract(coalesce(d.post_link, m.post_link), 'youtu\\.be/([^/?#]+)', 1))
+           when m.platform = 'yt'
+                and regexp_extract(coalesce(d.post_link, m.post_link), '[?&]v=([^&#]+)', 1) <> ''
+             then concat('yt:', regexp_extract(coalesce(d.post_link, m.post_link), '[?&]v=([^&#]+)', 1))
+           when m.platform = 'yt'
+                and regexp_extract(coalesce(d.post_link, m.post_link), '/shorts/([^/?#]+)', 1) <> ''
+             then concat('yt:', regexp_extract(coalesce(d.post_link, m.post_link), '/shorts/([^/?#]+)', 1))
+           when m.post_id is not null and m.post_id <> ''
+             then concat(m.platform, ':', m.post_id)
+           else null
+         end = bk.post_match_key
+    left join biz_link_one bl
+      on regexp_replace(
+           replace(
+             replace(
+               replace(
+                 lower(regexp_replace(coalesce(d.post_link, m.post_link), '[?#].*$', '')),
+                 '/reels/',
+                 '/p/'
+               ),
+               '/reel/',
+               '/p/'
+             ),
+             '/tv/',
+             '/p/'
+           ),
+           '/+$',
+           ''
+         ) = bl.post_link_key
+     and bk.channel_link_id is null
     order by m.stat_date, m.channel_type, m.channel_name, m.post_id
   `;
   const [rows] = await conn.query(sql, [
@@ -508,8 +742,27 @@ async function buildWarehousePosts(start, end, options = {}) {
     ...params,
     ...params,
     ...params,
+    ...params,
+    ...params,
     ...params
   ]);
+  const [productLineRows] = await conn.query(`
+    select firstType as firstType,
+           secondType as secondType,
+           detailType as detailType,
+           count(distinct msku) as mskuCount,
+           count(distinct asin) as asinCount,
+           date(min(amazon_first_order_time)) as firstOrderDate,
+           max(product_planner) as productPlanner,
+           max(sku_operator_name) as skuOperatorName
+    from dim.dim_sku_product_df
+    where channel = 'AMAZON'
+      and firstType is not null
+      and trim(firstType) <> ''
+    group by firstType, secondType, detailType
+    order by firstType, secondType, detailType
+    limit 100000
+  `);
   await conn.end();
   const posts = new Map();
   rows.forEach(row => {
@@ -536,7 +789,17 @@ async function buildWarehousePosts(start, end, options = {}) {
     },
     reviewWeek: {
       dateRange: `${dateKey(start)} ~ ${dateKey(end)}`
-    }
+    },
+    productLineMaster: productLineRows.map(row => ({
+      firstType: row.firstType || "",
+      secondType: row.secondType || "",
+      detailType: row.detailType || "",
+      mskuCount: Number(row.mskuCount || 0),
+      asinCount: Number(row.asinCount || 0),
+      firstOrderDate: row.firstOrderDate || "",
+      productPlanner: row.productPlanner || "",
+      skuOperatorName: row.skuOperatorName || ""
+    }))
   };
 }
 
@@ -704,6 +967,53 @@ const server = http.createServer(async (req, res) => {
       if (!start || !end) throw new Error("缺少有效 start/end 日期");
       const source = await buildWarehousePosts(start, end);
       sendJson(res, 200, { ok: true, source });
+    } catch (error) {
+      sendJson(res, 500, { ok: false, error: error.message || String(error) });
+    }
+    return;
+  }
+  if (url.pathname === "/api/posts/notes" && req.method === "GET") {
+    try {
+      const keys = (url.searchParams.get("keys") || "")
+        .split(",")
+        .map(key => decodeURIComponent(key).trim())
+        .filter(Boolean);
+      if (!keys.length) {
+        sendJson(res, 200, { ok: true, notes: [] });
+        return;
+      }
+      const db = getLocalDb();
+      const placeholders = keys.map(() => "?").join(", ");
+      const rows = db.prepare(`
+        SELECT post_key, post_title, post_link, note, updated_at
+        FROM post_notes
+        WHERE post_key IN (${placeholders})
+      `).all(...keys);
+      sendJson(res, 200, { ok: true, notes: rows });
+    } catch (error) {
+      sendJson(res, 500, { ok: false, error: error.message || String(error) });
+    }
+    return;
+  }
+  if (url.pathname === "/api/posts/notes" && req.method === "POST") {
+    try {
+      const body = await readJsonBody(req);
+      const postKey = String(body.postKey || "").trim();
+      if (!postKey) throw new Error("postKey 不能为空");
+      const note = String(body.note || "").trim();
+      const title = String(body.title || "").trim();
+      const link = String(body.link || "").trim();
+      const db = getLocalDb();
+      db.prepare(`
+        INSERT INTO post_notes (post_key, post_title, post_link, note, updated_at)
+        VALUES (?, ?, ?, ?, ?)
+        ON CONFLICT(post_key) DO UPDATE SET
+          post_title = excluded.post_title,
+          post_link = excluded.post_link,
+          note = excluded.note,
+          updated_at = excluded.updated_at
+      `).run(postKey, title, link, note, nowIso());
+      sendJson(res, 200, { ok: true });
     } catch (error) {
       sendJson(res, 500, { ok: false, error: error.message || String(error) });
     }

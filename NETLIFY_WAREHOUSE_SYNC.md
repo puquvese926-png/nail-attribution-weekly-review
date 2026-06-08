@@ -2,7 +2,9 @@
 
 ## 目标
 
-让 3.0 看板部署到 Netlify 后，仍可通过后端 API 只读查询数仓帖子数据，并把结果缓存后供前端读取。
+让 3.0 看板部署到 Netlify 后，从本地 SQLite 协作层生成看板缓存包，再上传到 Netlify Blobs 供前端读取。
+
+当前正式上传路径不再在上传阶段重新直连数仓或飞书。数仓和飞书只在本地同步阶段进入 SQLite；线上上传阶段只读取本地 SQLite。
 
 ## API 流程
 
@@ -21,35 +23,59 @@
 
 本机预览仍走 `http://127.0.0.1:8787/api/posts/warehouse-refresh?full=1`，不受 Netlify API 影响。
 
-### 本地上传缓存
+### 本地 SQLite 上传缓存
 
-当 Netlify 云端无法直连数仓时，使用本地电脑作为同步器：
+使用本地电脑作为同步器：
 
-1. 本地脚本直连数仓。
-2. 把结果分片上传到 `/api/posts/warehouse-upload-chunk`。
-3. 上传完成后调用 `/api/posts/warehouse-upload-commit`。
-4. Netlify Functions 把分片合并写入 Blobs。
-5. 前端继续读取 `/api/posts/warehouse-cache?full=1`。
+1. 本地计划任务先同步数仓帖子到 SQLite。
+2. 本地计划任务再同步站外 / PR 到 SQLite。
+3. `validate-local-review-upload.js` 执行上传前校验。
+4. 校验通过后，`upload-warehouse-cache.js` 从 SQLite 生成上传包。
+5. 上传包分片上传到 `/api/posts/warehouse-upload-chunk`。
+6. 上传完成后调用 `/api/posts/warehouse-upload-commit?full=1`。
+7. Netlify Functions 把分片合并写入 Blobs。
+8. 前端继续读取 `/api/posts/warehouse-cache?full=1`。
 
-首次执行全量：
+手动执行上传前校验：
+
+```powershell
+npm run localdb:validate-upload
+```
+
+手动执行 SQLite 上传：
 
 ```powershell
 npm run warehouse:upload:full
 ```
 
-日常执行增量，默认上传最近 14 天并合并进全量缓存：
+安装 Windows 周五上传前校验任务：
 
 ```powershell
-npm run warehouse:upload:incremental
+npm run localdb:install-task:upload-precheck
 ```
 
-安装 Windows 每日计划任务：
+安装 Windows 周五 Netlify 上传任务：
 
 ```powershell
-powershell -ExecutionPolicy Bypass -File .\scripts\install-warehouse-upload-task.ps1 -At 08:30
+npm run localdb:install-task:netlify-upload
 ```
 
-本地上传不触发 Netlify production deploy，主要消耗少量 Functions 请求和 Blob/带宽额度。
+本地上传不触发 Netlify production deploy，主要消耗少量 Functions 请求和 Blob/带宽额度。上传脚本内置同一套校验闸门，校验失败会直接停止上传。
+
+默认周五链路：
+
+```text
+19:00  WeeklyReviewDashboard_LocalOffsiteSync
+19:30  WeeklyReviewDashboard_LocalWarehouseSync
+19:45  WeeklyReviewDashboard_LocalUploadPrecheck
+20:00  WeeklyReviewDashboard_LocalNetlifyUpload
+```
+
+其中 `19:30` 的周五帖子数仓补跑可以通过以下安装入口加入同一个数仓任务：
+
+```powershell
+npm run localdb:install-task:warehouse-with-friday-upload-chain
+```
 
 ## Netlify 环境变量
 
@@ -63,7 +89,18 @@ powershell -ExecutionPolicy Bypass -File .\scripts\install-warehouse-upload-task
 
 这些变量只在 Netlify Functions 中读取，不会进入前端 JS。
 
-本地脚本还需要 `.env.local`，可从 `.env.local.example` 复制后填写。
+本地同步脚本需要 `.env.local` 中的数仓 / 飞书配置。SQLite 上传脚本只要求本地具备：
+
+- `NETLIFY_SITE_URL`
+- `WAREHOUSE_UPLOAD_TOKEN`
+
+`NETLIFY_SITE_URL` 默认使用 `https://nail-attribution-console-demo.netlify.app`，后续更换正式生产域名时再覆盖。上传 token 必须配置，也可以放在本地 `.warehouse-upload-token.local`。
+
+本地 SQLite 默认路径：
+
+```text
+C:\Users\HP\DataGripProjects\数仓\local_cache\weekly_review_cache.sqlite
+```
 
 ## 健康检查
 
@@ -87,15 +124,16 @@ powershell -ExecutionPolicy Bypass -File .\scripts\install-warehouse-upload-task
 - `netlify/functions/warehouse-sync.mts`：同步调试入口，直接查询并写缓存。
 - `netlify/functions/warehouse-refresh-scheduled.mts`：每日定时触发后台同步。Netlify scheduled function 不支持自定义 `/api` path，手动调试用 `/.netlify/functions/warehouse-refresh-scheduled`。
 - `netlify/functions/_shared/warehouse-api.mjs`：Netlify API 共用逻辑。
-- `offsite-lark-sync-server.js`：本地同步服务，同时导出数仓查询函数供 Netlify 复用。
+- `offsite-lark-sync-server.js`：本地同步服务，同时导出数仓 / 飞书读取函数供本地 SQLite 同步使用。
+- `scripts/sync-local-review-db.js`：同步数仓 / 飞书到本地 SQLite。
+- `scripts/local-review-cache-package.js`：从本地 SQLite 生成 Netlify 兼容上传包。
+- `scripts/validate-local-review-upload.js`：上传前确定性校验闸门。
+- `scripts/upload-warehouse-cache.js`：读取本地 SQLite，校验通过后分片上传到 Netlify。
 
 ## 验收
 
-1. Netlify 环境变量已配置，远端数仓允许 Netlify 函数访问。
-2. 部署后访问 `/api/posts/warehouse-health?full=1`，确认 `env.ok=true`。
-3. 触发 `/api/posts/warehouse-sync-background?full=1`。
-4. 轮询 `/api/posts/warehouse-status?full=1`，成功时返回 `done`，失败时返回 `error`。
-5. 访问 `/api/posts/warehouse-cache?full=1&meta=1`，确认缓存存在且行数/帖子数合理。
-6. 页面点击“同步数仓”后按钮进入后台同步状态。
-7. 同步完成后出现“数仓同步预检”弹窗。
-8. 确认同步后，帖子明细数据来源显示为数仓数据。
+1. 本地 SQLite 已完成帖子数仓同步和站外 / PR 同步。
+2. `npm run localdb:validate-upload` 通过，并生成 `pre-upload-validation-latest.json`。
+3. `npm run warehouse:upload:full` 使用本地 SQLite 上传成功。
+4. 访问 `/api/posts/warehouse-cache?full=1&meta=1`，确认缓存存在且行数/帖子数合理。
+5. 页面读取云端缓存后，帖子明细、站外、PR 卡片口径与本地 SQLite 校验报告一致。

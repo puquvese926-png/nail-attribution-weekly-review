@@ -1,23 +1,15 @@
 param(
-  [string]$TaskName = "WeeklyDashboardWarehouseUpload",
-  [string]$At = "08:30",
-  [int]$Days = 14,
-  [switch]$Full
+  [string]$At = "20:00",
+  [string]$TaskName = "WeeklyReviewDashboard_LocalNetlifyUpload"
 )
 
-$Root = Split-Path -Parent $PSScriptRoot
-$Node = (Get-Command node -ErrorAction Stop).Source
-$Script = Join-Path $Root "scripts\upload-warehouse-cache.js"
-$EnvFile = Join-Path $Root ".env.local"
+$ErrorActionPreference = "Stop"
 
-if (-not (Test-Path $EnvFile)) {
-  throw "Missing $EnvFile. Copy .env.local.example to .env.local and fill the values before installing the task."
+$scriptDir = Split-Path -Parent $MyInvocation.MyCommand.Path
+$installerPath = Join-Path $scriptDir "install-local-review-netlify-upload-task.ps1"
+
+if (-not (Test-Path $installerPath)) {
+  throw "未找到新版上传任务安装脚本：$installerPath"
 }
 
-$Arguments = if ($Full) { "`"$Script`" --full" } else { "`"$Script`" --incremental --days $Days" }
-$Action = New-ScheduledTaskAction -Execute $Node -Argument $Arguments -WorkingDirectory $Root
-$Trigger = New-ScheduledTaskTrigger -Daily -At ([datetime]::ParseExact($At, "HH:mm", $null))
-$Settings = New-ScheduledTaskSettingsSet -StartWhenAvailable -MultipleInstances IgnoreNew -ExecutionTimeLimit (New-TimeSpan -Hours 2)
-
-Register-ScheduledTask -TaskName $TaskName -Action $Action -Trigger $Trigger -Settings $Settings -Description "Upload weekly dashboard warehouse cache to Netlify Blobs" -Force | Out-Null
-Write-Host "Scheduled task installed: $TaskName at $At"
+& $installerPath -At $At -TaskName $TaskName
